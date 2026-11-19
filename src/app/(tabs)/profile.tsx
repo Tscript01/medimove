@@ -1,336 +1,206 @@
 import { Ionicons } from '@expo/vector-icons'
 import Constants from 'expo-constants'
 import * as Haptics from 'expo-haptics'
-import { useState, type ComponentProps, type ReactNode } from 'react'
+import { useRouter } from 'expo-router'
+import { useState } from 'react'
+import { Alert, StyleSheet, Switch, View } from 'react-native'
 import {
-    Alert,
-    Linking,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    useColorScheme,
-    View,
-} from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+  AppText,
+  Avatar,
+  Badge,
+  Card,
+  ListRow,
+  Notice,
+  Screen,
+  SecondaryButton,
+  SectionHeader,
+  SegmentedControl,
+  type SegmentedOption,
+} from '@/components/ui'
+import { useAuthStore } from '@/store/authStore'
+import { useThemeStore, type ThemePreference } from '@/store/themeStore'
+import { useAppTheme } from '@/theme'
+import { titleCase } from '@/utils/format'
 
-type IconName = ComponentProps<typeof Ionicons>['name']
-
-/* ------------------- Mock data: replace with your real user/profile ------------------- */
-const USER = { name: 'Adebayo Ogunleye', phone: '+234 803 555 0142' }
-const MEDICAL = [
-  { label: 'Blood group', value: 'O+' },
-  { label: 'Genotype', value: 'AA' },
-  { label: 'Allergies', value: 'Penicillin' },
-]
-const CONTACTS = [
-  { id: 'c1', name: 'Folake Ogunleye', relation: 'Spouse', phone: '+2348035550143' },
-  { id: 'c2', name: 'Dr. Tunde Bello', relation: 'Family doctor', phone: '+2348035550144' },
+const THEME_OPTIONS: readonly SegmentedOption<ThemePreference>[] = [
+  { value: 'light', label: 'Light', icon: 'sunny-outline' },
+  { value: 'dark', label: 'Dark', icon: 'moon-outline' },
+  { value: 'system', label: 'System', icon: 'phone-portrait-outline' },
 ]
 
-/* --------------------------- Tokens (same as Dispatch + Tabs) --------------------------- */
-const palette = {
-  light: {
-    canvas: '#E9EFF4', surface: '#FFFFFF', ink: '#0B1B2B', muted: '#47586B', line: '#C5D0DA',
-    danger: '#C8102E', onDanger: '#FFFFFF', dangerText: '#C8102E', select: '#0B5FA5', selectBg: '#E3F0FB',
-  },
-  dark: {
-    canvas: '#0A111C', surface: '#142033', ink: '#F2F6FA', muted: '#A9B8CA', line: '#2C3B52',
-    danger: '#D7263D', onDanger: '#FFFFFF', dangerText: '#FF6B7A', select: '#6CB6FF', selectBg: '#16304D',
-  },
-}
-type Theme = typeof palette.light
-
-const initials = (name: string) =>
-  name
-    .replace(/^(dr\.?|mr\.?|mrs\.?|ms\.?)\s+/i, '')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('')
-
-/* ------------------------------------ Building blocks ------------------------------------ */
-function Group({ title, children, s }: { title?: string; children: ReactNode; s: Styles }) {
-  return (
-    <View style={s.groupWrap}>
-      {title ? (
-        <Text style={s.groupTitle} accessibilityRole="header" maxFontSizeMultiplier={1.5}>
-          {title}
-        </Text>
-      ) : null}
-      <View style={s.group}>{children}</View>
-    </View>
-  )
-}
-
-type RowProps = {
-  icon: IconName
-  label: string
-  value?: string
-  onPress?: () => void
-  right?: ReactNode
-  danger?: boolean
-  last?: boolean
-  hint?: string
-  s: Styles
-  t: Theme
-}
-
-function Row({ icon, label, value, onPress, right, danger, last, hint, s, t }: RowProps) {
-  const color = danger ? t.dangerText : t.ink
-  const content = (
-    <>
-      <View style={[s.rowIcon, danger && { backgroundColor: t.danger }]}>
-        <Ionicons name={icon} size={20} color={danger ? t.onDanger : t.select} />
-      </View>
-      <View style={[s.rowBody, !last && s.rowDivider]}>
-        <Text style={[s.rowLabel, { color }]} maxFontSizeMultiplier={1.5}>
-          {label}
-        </Text>
-        {value ? (
-          <Text style={s.rowValue} maxFontSizeMultiplier={1.5}>
-            {value}
-          </Text>
-        ) : null}
-        {right ?? (onPress && !danger ? <Ionicons name="chevron-forward" size={20} color={t.muted} /> : null)}
-      </View>
-    </>
-  )
-
-  if (!onPress) return <View style={s.row}>{content}</View>
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={value ? `${label}, ${value}` : label}
-      accessibilityHint={hint}
-      android_ripple={{ color: t.selectBg }}
-      style={({ pressed }) => [s.row, pressed && Platform.OS === 'ios' && { opacity: 0.6 }]}
-    >
-      {content}
-    </Pressable>
-  )
-}
-
-/* -------------------------------------- Screen -------------------------------------- */
 export default function ProfileScreen() {
-  const scheme = useColorScheme()
-  const t = palette[scheme === 'dark' ? 'dark' : 'light']
-  const s = styleSets[scheme === 'dark' ? 'dark' : 'light']
-  const insets = useSafeAreaInsets()
+  const t = useAppTheme()
+  const router = useRouter()
+  const user = useAuthStore((state) => state.user)
+  const logout = useAuthStore((state) => state.logout)
+  const themePreference = useThemeStore((state) => state.preference)
+  const setThemePreference = useThemeStore((state) => state.setPreference)
 
   const [notifications, setNotifications] = useState(true)
   const [shareLocation, setShareLocation] = useState(true)
 
-  const toggle = (set: (v: boolean) => void) => (v: boolean) => {
-    Haptics.selectionAsync()
-    set(v)
-  }
-
-  const callContact = (phone: string) => {
-    Haptics.selectionAsync()
-    Linking.openURL(`tel:${phone}`)
+  const toggle = (set: (value: boolean) => void) => (value: boolean) => {
+    Haptics.selectionAsync().catch(() => {})
+    set(value)
   }
 
   const comingSoon = (what: string) => () => Alert.alert(what, 'This screen is not built yet.')
 
+  const selectTheme = (preference: ThemePreference) => {
+    if (preference === themePreference) return
+    Haptics.selectionAsync().catch(() => {})
+    void setThemePreference(preference)
+  }
+
   const signOut = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {})
     Alert.alert('Sign out?', 'You will need to sign in again to book an ambulance.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',
         style: 'destructive',
-        onPress: () => {
-          // TODO: call your auth sign-out here, then navigate to your login route
+        onPress: async () => {
+          await logout()
+          router.replace('/(auth)/login')
         },
       },
     ])
   }
 
   const switchProps = {
-    trackColor: { false: t.line, true: t.select },
-    ios_backgroundColor: t.line,
+    trackColor: { false: t.colors.borderStrong, true: t.colors.primary },
+    ios_backgroundColor: t.colors.borderStrong,
   }
 
   return (
-    <ScrollView
-      style={s.container}
-      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 32 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Text style={s.largeTitle} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
-        Profile
-      </Text>
+    <Screen>
+      <AppText variant="display">Profile</AppText>
+      <AppText variant="body" color="textMuted" style={styles.subtitle}>
+        Your account and emergency details.
+      </AppText>
 
-      {/* Identity */}
-      <View style={[s.group, s.identity]}>
-        <View style={s.avatar} accessible={false}>
-          <Text style={s.avatarText} maxFontSizeMultiplier={1.2}>
-            {initials(USER.name)}
-          </Text>
+      <Card style={styles.identity}>
+        <Avatar name={user?.fullName ?? 'Guest'} size={62} />
+        <View style={styles.identityText}>
+          <AppText variant="heading" numberOfLines={2}>
+            {user?.fullName ?? 'Guest'}
+          </AppText>
+          <AppText variant="caption" color="textMuted" numberOfLines={1}>
+            {user?.email ?? ''}
+          </AppText>
+          <AppText variant="caption" color="textMuted" numberOfLines={1}>
+            {user?.phone ?? ''}
+          </AppText>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.name} numberOfLines={2} maxFontSizeMultiplier={1.5}>
-            {USER.name}
-          </Text>
-          <Text style={s.phone} maxFontSizeMultiplier={1.5}>
-            {USER.phone}
-          </Text>
+        {user?.role ? <Badge label={titleCase(user.role)} tone="primary" /> : null}
+      </Card>
+
+      {user && !user.emailVerified ? (
+        <View style={styles.verifyNote}>
+          <Notice text="Verify your email to keep your account secure." tone="warning" />
         </View>
-        <Pressable
-          onPress={comingSoon('Edit profile')}
-          accessibilityRole="button"
-          accessibilityLabel="Edit profile"
-          android_ripple={{ color: t.selectBg, borderless: true }}
-          style={({ pressed }) => [s.editBtn, pressed && Platform.OS === 'ios' && { opacity: 0.6 }]}
-        >
-          <Text style={s.editText} maxFontSizeMultiplier={1.4}>
-            Edit
-          </Text>
-        </Pressable>
-      </View>
+      ) : null}
 
-      {/* Medical ID: the thing responders need first */}
-      <Group title="Medical ID" s={s}>
-        <View style={s.medRow}>
-          {MEDICAL.map((m) => (
-            <View key={m.label} style={s.medTile} accessible accessibilityLabel={`${m.label}: ${m.value}`}>
-              <Text style={s.medLabel} maxFontSizeMultiplier={1.4}>
-                {m.label}
-              </Text>
-              <Text style={s.medValue} numberOfLines={2} maxFontSizeMultiplier={1.3}>
-                {m.value}
-              </Text>
-            </View>
-          ))}
+      <SectionHeader title="Medical ID" subtitle="Information responders see first" />
+      <Card style={styles.cardGap}>
+        <Notice text="No medical details have been added yet. This section will unlock when medical profiles are available." tone="info" />
+        <ListRow icon="medkit-outline" title="Edit medical details" onPress={comingSoon('Medical details')} last />
+      </Card>
+
+      <SectionHeader title="Emergency contacts" subtitle="People we can reach on your behalf" />
+      <Card style={styles.cardGap} padded={false}>
+        <View style={styles.noticePad}>
+          <Notice text="No emergency contacts are saved yet." tone="info" />
         </View>
-        <Row icon="medkit" label="Edit medical details" onPress={comingSoon('Medical details')} last s={s} t={t} />
-      </Group>
+        <ListRow icon="person-add-outline" title="Add a contact" onPress={comingSoon('Add contact')} last />
+      </Card>
 
-      {/* Emergency contacts */}
-      <Group title="Emergency contacts" s={s}>
-        {CONTACTS.map((c) => (
-          <View key={c.id} style={s.row}>
-            <View style={s.contactAvatar} accessible={false}>
-              <Text style={s.contactInitials} maxFontSizeMultiplier={1.2}>
-                {initials(c.name)}
-              </Text>
-            </View>
-            <View style={[s.rowBody, s.rowDivider]}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.rowLabel} maxFontSizeMultiplier={1.5}>
-                  {c.name}
-                </Text>
-                <Text style={s.rowSub} maxFontSizeMultiplier={1.5}>
-                  {c.relation}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => callContact(c.phone)}
-                accessibilityRole="button"
-                accessibilityLabel={`Call ${c.name}, ${c.relation}`}
-                android_ripple={{ color: t.selectBg, borderless: true }}
-                style={({ pressed }) => [s.callBtn, pressed && Platform.OS === 'ios' && { opacity: 0.6 }]}
-              >
-                <Ionicons name="call" size={22} color={t.onDanger} />
-              </Pressable>
-            </View>
-          </View>
-        ))}
-        <Row icon="person-add" label="Add a contact" onPress={comingSoon('Add contact')} last s={s} t={t} />
-      </Group>
-
-      {/* Preferences */}
-      <Group title="Preferences" s={s}>
-        <Row
-          icon="notifications"
-          label="Notifications"
-          s={s}
-          t={t}
-          right={
-            <Switch
-              {...switchProps}
-              value={notifications}
-              onValueChange={toggle(setNotifications)}
-              accessibilityLabel="Notifications"
-            />
-          }
+      <SectionHeader title="Preferences" />
+      <Card padded={false}>
+        <ListRow
+          icon="notifications-outline"
+          title="Notifications"
+          right={<Switch {...switchProps} value={notifications} onValueChange={toggle(setNotifications)} accessibilityLabel="Notifications" />}
         />
-        <Row
-          icon="location"
-          label="Share live location with responders"
-          s={s}
-          t={t}
+        <ListRow
+          icon="locate-outline"
+          title="Share location with responders"
           right={
             <Switch
               {...switchProps}
               value={shareLocation}
               onValueChange={toggle(setShareLocation)}
-              accessibilityLabel="Share live location with responders"
+              accessibilityLabel="Share location with responders"
             />
           }
         />
-        <Row icon="language" label="Language" value="English" onPress={comingSoon('Language')} last s={s} t={t} />
-      </Group>
+        <View
+          style={[
+            styles.appearance,
+            {
+              borderBottomColor: t.colors.border,
+              paddingHorizontal: t.spacing.lg,
+            },
+          ]}
+        >
+          <View style={styles.appearanceHeader}>
+            <View style={[styles.appearanceIcon, { backgroundColor: t.colors.primarySoft }]}>
+              <Ionicons name="color-palette-outline" size={18} color={t.colors.primary} />
+            </View>
+            <View style={styles.appearanceCopy}>
+              <AppText variant="bodyStrong">Appearance</AppText>
+              <AppText variant="caption" color="textMuted">
+                System follows your device setting.
+              </AppText>
+            </View>
+          </View>
+          <SegmentedControl
+            options={THEME_OPTIONS}
+            value={themePreference}
+            onChange={selectTheme}
+            accessibilityLabel="Appearance"
+          />
+        </View>
+        <ListRow icon="language-outline" title="Language" value="English" onPress={comingSoon('Language')} last />
+      </Card>
 
-      {/* Support */}
-      <Group title="Support" s={s}>
-        <Row icon="help-circle" label="Help & support" onPress={comingSoon('Help & support')} s={s} t={t} />
-        <Row icon="lock-closed" label="Privacy & terms" onPress={comingSoon('Privacy & terms')} last s={s} t={t} />
-      </Group>
+      <SectionHeader title="Support" />
+      <Card padded={false}>
+        <ListRow icon="help-circle-outline" title="Help & support" onPress={comingSoon('Help & support')} />
+        <ListRow icon="flash-outline" title="API diagnostics" onPress={() => router.push('/test-api')} />
+        <ListRow icon="lock-closed-outline" title="Privacy & terms" onPress={comingSoon('Privacy & terms')} last />
+      </Card>
 
-      <Group s={s}>
-        <Row icon="log-out" label="Sign out" onPress={signOut} danger last s={s} t={t} />
-      </Group>
-
-      <Text style={s.version} maxFontSizeMultiplier={1.4}>
-        Version {Constants.expoConfig?.version ?? '1.0.0'}
-      </Text>
-    </ScrollView>
+      <View style={styles.signOut}>
+        <SecondaryButton label="Sign out" icon="log-out-outline" onPress={signOut} />
+        <AppText variant="caption" color="textFaint">
+          Version {Constants.expoConfig?.version ?? '1.0.0'}
+        </AppText>
+      </View>
+    </Screen>
   )
 }
 
-/* -------------------------------------- Styles -------------------------------------- */
-const makeStyles = (t: Theme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.canvas },
-    largeTitle: { color: t.ink, fontSize: 34, fontWeight: '800', paddingHorizontal: 20, marginBottom: 16 },
-
-    groupWrap: { marginTop: 24 },
-    groupTitle: { color: t.muted, fontSize: 14, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, marginHorizontal: 32, marginBottom: 8 },
-    group: { backgroundColor: t.surface, borderRadius: 20, marginHorizontal: 16, overflow: 'hidden' },
-
-    identity: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
-    avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: t.danger, alignItems: 'center', justifyContent: 'center' },
-    avatarText: { color: t.onDanger, fontSize: 24, fontWeight: '800' },
-    name: { color: t.ink, fontSize: 20, fontWeight: '700' },
-    phone: { color: t.muted, fontSize: 16, marginTop: 2 },
-    editBtn: { minHeight: 48, minWidth: 48, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
-    editText: { color: t.select, fontSize: 17, fontWeight: '600' },
-
-    medRow: { flexDirection: 'row', gap: 10, padding: 12 },
-    medTile: { flex: 1, backgroundColor: t.canvas, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 10, minHeight: 78, justifyContent: 'space-between' },
-    medLabel: { color: t.muted, fontSize: 13, fontWeight: '600' },
-    medValue: { color: t.ink, fontSize: 20, fontWeight: '800', marginTop: 6 },
-
-    row: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingLeft: 16 },
-    rowIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: t.selectBg, alignItems: 'center', justifyContent: 'center' },
-    rowBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 56, marginLeft: 14, paddingRight: 16, paddingVertical: 8 },
-    rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line },
-    rowLabel: { flex: 1, color: t.ink, fontSize: 17, fontWeight: '500' },
-    rowSub: { color: t.muted, fontSize: 15, marginTop: 2 },
-    rowValue: { color: t.muted, fontSize: 17 },
-
-    contactAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: t.selectBg, alignItems: 'center', justifyContent: 'center' },
-    contactInitials: { color: t.select, fontSize: 15, fontWeight: '800' },
-    callBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.danger, alignItems: 'center', justifyContent: 'center' },
-
-    version: { color: t.muted, fontSize: 14, textAlign: 'center', marginTop: 24 },
-  })
-
-type Styles = ReturnType<typeof makeStyles>
-const styleSets = { light: makeStyles(palette.light), dark: makeStyles(palette.dark) }
+const styles = StyleSheet.create({
+  subtitle: { marginTop: 4, marginBottom: 20 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  identityText: { flex: 1, gap: 2 },
+  verifyNote: { marginTop: 12 },
+  cardGap: { gap: 12 },
+  noticePad: { padding: 16 },
+  appearance: {
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  appearanceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  appearanceIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appearanceCopy: { flex: 1, gap: 1 },
+  signOut: { gap: 10, marginTop: 32, marginBottom: 8 },
+})

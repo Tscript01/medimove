@@ -1,272 +1,553 @@
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
-import { useMemo, useState } from 'react'
-import { Platform, Pressable, ScrollView, StyleSheet, Text, useColorScheme, useWindowDimensions, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import * as Location from 'expo-location'
+import { useRouter } from 'expo-router'
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native'
+import { TrackingMap, type MapMarker } from '@/components/TrackingMap'
+import {
+  AmbulanceStatusCard,
+  AppInput,
+  AppText,
+  Card,
+  EmergencyButton,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  LocationCard,
+  Notice,
+  Screen,
+  SectionHeader,
+  TripSummaryCard,
+} from '@/components/ui'
+import { useAsync } from '@/hooks/useAsync'
+import { bookingService } from '@/services/booking.service'
+import { fleetService } from '@/services/fleet.service'
+import { useAuthStore } from '@/store/authStore'
+import { useLocationStore } from '@/store/locationStore'
+import { useAppTheme } from '@/theme'
+import type { EmergencyCategory, RankedHospital } from '@/types'
+import {
+  EMERGENCY_CATEGORIES,
+  emergencyCategoryLabel,
+  formatDate,
+  formatDistance,
+  formatNaira,
+  formatNairaFromNaira,
+} from '@/utils/format'
+import { makeIdempotencyKey } from '@/utils/id'
 
-/* ---------------------------- Mock data (UI only) ---------------------------- */
-type Provider = { id: string; name: string; vehicleType: string; proximityKm: number; x: number; y: number }
-const HOSPITALS = [
-  { id: 'h1', name: 'Ekiti State University Teaching Hospital' },
-  { id: 'h2', name: 'Ado General Hospital' },
-]
-const PROVIDERS: Provider[] = [
-  { id: 'p1', name: 'Ekiti Rapid Response', vehicleType: 'ICU', proximityKm: 1.2, x: 0.68, y: 0.3 },
-  { id: 'p2', name: 'Ado Medic Unit', vehicleType: 'Basic', proximityKm: 2.0, x: 0.24, y: 0.3 },
-  { id: 'p3', name: 'Red Cross Ekiti', vehicleType: 'Basic', proximityKm: 3.1, x: 0.8, y: 0.9 },
-]
-const USER = { x: 0.48, y: 0.62 }
-
-/* -------------------------------- Design tokens ------------------------------- */
-const palette = {
-  light: {
-    canvas: '#E9EFF4', surface: '#FFFFFF', ink: '#0B1B2B', muted: '#47586B', line: '#C5D0DA', handle: '#B3BFCB',
-    danger: '#C8102E', onDanger: '#FFFFFF', select: '#0B5FA5', selectBg: '#E3F0FB', basic: '#1D5FBF', icu: '#C8102E',
-    map: '#EEF1F4', road: '#FFFFFF', park: '#D3EBD5', water: '#BFDDF2', ok: '#15803D',
-  },
-  dark: {
-    canvas: '#0A111C', surface: '#142033', ink: '#F2F6FA', muted: '#A9B8CA', line: '#2C3B52', handle: '#3A4B63',
-    danger: '#D7263D', onDanger: '#FFFFFF', select: '#6CB6FF', selectBg: '#16304D', basic: '#6CA8FF', icu: '#FF6B7A',
-    map: '#101A28', road: '#1D2B40', park: '#12301F', water: '#10304A', ok: '#4ADE80',
-  },
+function greeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
 }
-type Theme = typeof palette.light
 
-const etaMinutes = (p: Provider) => Math.max(1, Math.round((p.proximityKm / 30) * 60))
-const fareFor = (p: Provider) => {
-  const mult = p.vehicleType.toLowerCase().includes('icu') ? 1.4 : 1
-  return Math.min(200, Math.max(10, Math.round((10 + p.proximityKm * 4 + 3.2 * 7) * mult)))
-}
+export default function HomeScreen() {
+  const router = useRouter()
+  const t = useAppTheme()
+  const user = useAuthStore((state) => state.user)
+  const pickup = useLocationStore((state) => state.pickup)
+  const setPickup = useLocationStore((state) => state.setPickup)
 
-/* ---------------------------- Placeholder map (no Mapbox) ---------------------------- */
-function FakeMap({ t, selected, top }: { t: Theme; selected: Provider; top: number }) {
-  const [size, setSize] = useState({ w: 0, h: 0 })
-  const px = (p: { x: number; y: number }) => ({ left: p.x * size.w, top: p.y * size.h })
-  const road = (extra: object) => <View style={[{ position: 'absolute', backgroundColor: t.road }, extra]} />
-  const routeW = 5
+  const [locating, setLocating] = useState(false)
+  const [locationNote, setLocationNote] = useState<string | null>(null)
 
-  return (
-    <View
-      style={{ flex: 1, backgroundColor: t.map, overflow: 'hidden' }}
-      onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
-    >
-      {size.w > 0 && (
-        <>
-          <View style={{ position: 'absolute', left: 0, top: '62%', width: '34%', height: '38%', backgroundColor: t.park }} />
-          <View style={{ position: 'absolute', right: 0, top: 0, width: '30%', height: '48%', backgroundColor: t.water, borderBottomLeftRadius: 120 }} />
-          {road({ left: 0, right: 0, top: '30%', height: 12 })}
-          {road({ left: 0, right: 0, top: '62%', height: 12 })}
-          {road({ left: 0, right: 0, top: '90%', height: 12 })}
-          {road({ top: 0, bottom: 0, left: '22%', width: 12 })}
-          {road({ top: 0, bottom: 0, left: '48%', width: 12 })}
-          {road({ top: '40%', bottom: 0, left: '80%', width: 12 })}
+  const [category, setCategory] = useState<EmergencyCategory>('MEDICAL')
+  const [hospitalChoice, setHospitalChoice] = useState<string | null>(null)
+  const [providerChoice, setProviderChoice] = useState<string | null>(null)
+  const [callbackPhone, setCallbackPhone] = useState(user?.phone ?? '')
+  const [isForSelf, setIsForSelf] = useState(true)
+  const [patientName, setPatientName] = useState('')
+  const [patientPhone, setPatientPhone] = useState('')
+  const [notes, setNotes] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-          {/* Route: ambulance -> patient */}
-          <View style={{ position: 'absolute', backgroundColor: t.select, width: routeW, left: selected.x * size.w - routeW / 2, top: Math.min(selected.y, USER.y) * size.h, height: Math.abs(USER.y - selected.y) * size.h }} />
-          <View style={{ position: 'absolute', backgroundColor: t.select, height: routeW, top: USER.y * size.h - routeW / 2, left: Math.min(selected.x, USER.x) * size.w, width: Math.abs(USER.x - selected.x) * size.w }} />
+  const openLocationPicker = useCallback(() => {
+    router.push('/location-picker')
+  }, [router])
 
-          {/* Patient */}
-          <View style={{ position: 'absolute', width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface, left: px(USER).left - 13, top: px(USER).top - 13 }}>
-            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: t.select }} />
-          </View>
+  /* ------------------------------- Location -------------------------------- */
 
-          {/* Ambulances */}
-          {PROVIDERS.map((p) => {
-            const active = p.id === selected.id
-            const s = active ? 46 : 34
-            return (
-              <View
-                key={p.id}
-                style={{
-                  position: 'absolute', width: s, height: s, borderRadius: s / 2,
-                  left: px(p).left - s / 2, top: px(p).top - s / 2,
-                  backgroundColor: active ? t.danger : t.surface, borderWidth: 2.5,
-                  borderColor: active ? t.surface : t.danger, alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <Ionicons name="medical" size={active ? 24 : 18} color={active ? t.onDanger : t.danger} />
-              </View>
-            )
-          })}
-        </>
-      )}
-      <View style={{ height: top }} pointerEvents="none" />
-    </View>
+  const requestLocation = useCallback(async () => {
+    setLocating(true)
+    setLocationNote(null)
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync()
+      if (status !== 'granted') {
+        setLocationNote('Location permission is off. Choose a pickup point manually.')
+        return
+      }
+
+      let position: Location.LocationObject | null = null
+      try {
+        position = await Location.getLastKnownPositionAsync({ maxAge: 60_000 })
+      } catch {
+        // No cached fix; fall through to a fresh one.
+      }
+      if (!position) {
+        position = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+        ])
+      }
+
+      if (position) {
+        setPickup({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          address: 'Current location',
+          source: 'gps',
+        })
+      } else {
+        setLocationNote('No GPS fix yet. Choose a pickup point manually.')
+      }
+    } catch {
+      setLocationNote('Location is unavailable. Choose a pickup point manually.')
+    } finally {
+      setLocating(false)
+    }
+  }, [setPickup])
+
+  // Initial GPS lookup is an Effect event: it is triggered by mount, while the
+  // same callback remains available to the UI's "Use my location" action.
+  const locateOnMount = useEffectEvent(() => {
+    if (!useLocationStore.getState().pickup) void requestLocation()
+  })
+
+  useEffect(() => {
+    void Promise.resolve().then(() => locateOnMount())
+  }, [])
+
+  /* --------------------------------- Fleet --------------------------------- */
+
+  const coords = useMemo(
+    () => (pickup ? { lat: pickup.lat, lng: pickup.lng } : null),
+    [pickup]
   )
-}
 
-/* ---------------------------------- Screen ---------------------------------- */
-export default function DispatchScreen() {
-  const scheme = useColorScheme()
-  const t = palette[scheme === 'dark' ? 'dark' : 'light']
-  const styles = useMemo(() => makeStyles(t), [t])
-  const insets = useSafeAreaInsets()
-  const { height } = useWindowDimensions()
+  const fleetState = useAsync(async () => {
+    if (!coords) return null
+    return fleetService.getFleet(coords.lat, coords.lng)
+  }, [coords?.lat, coords?.lng])
 
-  const [hospital, setHospital] = useState(HOSPITALS[0])
-  const [provider, setProvider] = useState(PROVIDERS[0])
-  const fare = fareFor(provider)
+  const recentState = useAsync(() => bookingService.list({ limit: 1 }), [])
+  const recentBooking = recentState.data?.bookings?.[0] ?? null
 
-  const pickHospital = (h: (typeof HOSPITALS)[number]) => { Haptics.selectionAsync(); setHospital(h) }
-  const pickProvider = (p: Provider) => { Haptics.selectionAsync(); setProvider(p) }
-  const onDispatch = () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+  const hospitals = fleetState.data?.hospitals
+  const providers = fleetState.data?.data
+  const serverAddress = fleetState.data?.userLocation?.pickupAddress
+  const pickupAddress = pickup?.source === 'gps'
+    ? serverAddress ?? pickup.address
+    : pickup?.address ?? serverAddress ?? 'Your current location'
 
-  const pressedStyle = (pressed: boolean) => (pressed && Platform.OS === 'ios' ? { opacity: 0.7 } : null)
+  // Defaults are derived, not written back into state, so a fleet refresh
+  // never triggers an extra render just to re-select the recommended option.
+  const hospitalId = hospitalChoice ?? (hospitals?.find((h) => h.isRecommended) ?? hospitals?.[0])?.id ?? null
+  const providerId = providerChoice ?? (providers?.find((p) => p.isRecommended) ?? providers?.[0])?.id ?? null
+
+  const selectedHospital: RankedHospital | null = hospitals?.find((h) => h.id === hospitalId) ?? null
+  const selectedProvider = providers?.find((p) => p.id === providerId) ?? null
+
+  const markers: MapMarker[] = useMemo(() => {
+    const list: MapMarker[] = []
+    if (coords) list.push({ id: 'me', latitude: coords.lat, longitude: coords.lng, kind: 'user', label: 'You' })
+    if (selectedProvider) {
+      list.push({
+        id: selectedProvider.id,
+        latitude: selectedProvider.latitude,
+        longitude: selectedProvider.longitude,
+        kind: 'ambulance',
+        label: selectedProvider.vehicleType,
+      })
+    }
+    if (selectedHospital) {
+      list.push({
+        id: selectedHospital.id,
+        latitude: selectedHospital.lat,
+        longitude: selectedHospital.lng,
+        kind: 'hospital',
+        label: 'Hospital',
+      })
+    }
+    return list
+  }, [coords, selectedProvider, selectedHospital])
+
+  const route = useMemo(() => {
+    if (!coords || !selectedProvider) return []
+    return [
+      { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
+      { latitude: coords.lat, longitude: coords.lng },
+    ]
+  }, [coords, selectedProvider])
+
+  /* -------------------------------- Dispatch ------------------------------- */
+
+  const handleDispatch = async () => {
+    if (!coords || !selectedProvider || !selectedHospital) {
+      setError('Choose a pickup point, then wait for nearby ambulances to load.')
+      return
+    }
+    if (!callbackPhone.trim()) {
+      setError('Add a phone number the crew can call you on.')
+      return
+    }
+    if (!isForSelf && (!patientName.trim() || !patientPhone.trim())) {
+      setError('Add the patient’s name and phone number.')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    try {
+      const res = await bookingService.create({
+        providerId: selectedProvider.id,
+        pickupLat: coords.lat,
+        pickupLng: coords.lng,
+        pickupAddress,
+        destinationHospitalId: selectedHospital.id,
+        destAddress: selectedHospital.name,
+        callbackPhone: callbackPhone.trim(),
+        emergencyCategory: category,
+        isForSelf,
+        patientName: isForSelf ? undefined : patientName.trim(),
+        patientPhone: isForSelf ? undefined : patientPhone.trim(),
+        notes: notes.trim() || undefined,
+        idempotencyKey: makeIdempotencyKey(),
+      })
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      router.push({ pathname: '/booking/[id]', params: { id: res.booking.id } })
+    } catch (err) {
+      setError((err as Error).message || 'We could not dispatch an ambulance. Please try again.')
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const busy = locating || (fleetState.loading && !fleetState.data)
+  const hasFleet = Boolean(providers?.length)
+  const firstName = user?.fullName?.trim().split(/\s+/)[0]
 
   return (
-    <View style={styles.container}>
-      {/* Map */}
-      <View style={{ height: height * 0.46 }}>
-        <FakeMap t={t} selected={provider} top={0} />
-        <View style={[styles.statusPill, { top: insets.top + 8 }]} accessibilityLiveRegion="polite">
-          <View style={styles.statusDot} />
-          <Text style={styles.statusText} maxFontSizeMultiplier={1.4}>{PROVIDERS.length} ambulances nearby</Text>
-        </View>
-      </View>
-
-      {/* Sheet */}
-      <View style={styles.sheet}>
-        <View style={styles.handle} accessible={false} importantForAccessibility="no" />
-        <ScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
-          <Text style={styles.sectionTitle} accessibilityRole="header" maxFontSizeMultiplier={1.5}>Take me to</Text>
-          <View accessibilityRole="radiogroup" style={styles.group}>
-            {HOSPITALS.map((h) => {
-              const active = hospital.id === h.id
-              return (
-                <Pressable
-                  key={h.id}
-                  onPress={() => pickHospital(h)}
-                  accessibilityRole="radio"
-                  accessibilityLabel={h.name}
-                  accessibilityState={{ checked: active }}
-                  android_ripple={{ color: t.selectBg }}
-                  style={({ pressed }) => [styles.row, active && styles.rowActive, pressedStyle(pressed)]}
-                >
-                  <View style={[styles.rowIcon, active && { backgroundColor: t.select }]}>
-                    <Ionicons name="business" size={20} color={active ? t.surface : t.muted} />
-                  </View>
-                  <Text style={styles.rowTitle} numberOfLines={2} maxFontSizeMultiplier={1.5}>{h.name}</Text>
-                  <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={26} color={active ? t.select : t.line} />
-                </Pressable>
-              )
-            })}
-          </View>
-
-          <Text style={[styles.sectionTitle, { marginTop: 20 }]} accessibilityRole="header" maxFontSizeMultiplier={1.5}>
-            Choose an ambulance
-          </Text>
-          <View accessibilityRole="radiogroup" style={styles.group}>
-            {PROVIDERS.map((p) => {
-              const active = provider.id === p.id
-              const band = p.vehicleType.toLowerCase().includes('icu') ? t.icu : t.basic
-              const eta = etaMinutes(p)
-              return (
-                <Pressable
-                  key={p.id}
-                  onPress={() => pickProvider(p)}
-                  accessibilityRole="radio"
-                  accessibilityLabel={`${p.name}, ${p.vehicleType}, about ${eta} minutes away, ${p.proximityKm} kilometres`}
-                  accessibilityState={{ checked: active }}
-                  android_ripple={{ color: t.selectBg }}
-                  style={({ pressed }) => [styles.tag, active && styles.rowActive, pressedStyle(pressed)]}
-                >
-                  <View style={[styles.tagBand, { backgroundColor: band }]} />
-                  <View style={styles.tagBody}>
-                    <Text style={styles.rowTitle} numberOfLines={1} maxFontSizeMultiplier={1.5}>{p.name}</Text>
-                    <View style={styles.tagMeta}>
-                      <View style={[styles.typeBadge, { borderColor: band }]}>
-                        <Text style={[styles.typeBadgeText, { color: band }]} maxFontSizeMultiplier={1.4}>{p.vehicleType}</Text>
-                      </View>
-                      <Text style={styles.metaText} maxFontSizeMultiplier={1.4}>{p.proximityKm} km</Text>
-                    </View>
-                  </View>
-                  <View style={styles.etaBlock}>
-                    <Text style={styles.etaNumber} maxFontSizeMultiplier={1.3}>{eta}</Text>
-                    <Text style={styles.etaUnit} maxFontSizeMultiplier={1.3}>min</Text>
-                  </View>
-                  <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={26} color={active ? t.select : t.line} />
-                </Pressable>
-              )
-            })}
-          </View>
-        </ScrollView>
-
-        {/* Pinned action bar */}
-        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <View style={styles.fareRow}>
-            <Text style={styles.fareLabel} maxFontSizeMultiplier={1.4}>Estimated fare</Text>
-            <Text style={styles.fareValue} maxFontSizeMultiplier={1.4}>₦{fare.toLocaleString()}</Text>
+    <Screen safeTop padded={false}>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: t.spacing.lg }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.greeting}>
+          <View style={styles.greetingText}>
+            <AppText variant="caption" color="textMuted">
+              {greeting()}
+            </AppText>
+            <AppText variant="title">{firstName ? `${greeting()}, ${firstName}` : 'Need help?'}</AppText>
           </View>
           <Pressable
-            onPress={onDispatch}
+            onPress={openLocationPicker}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel={`Dispatch ${provider.name} to take you to ${hospital.name}. Estimated fare ${fare} naira.`}
-            android_ripple={{ color: '#00000033' }}
-            style={({ pressed }) => [styles.dispatchBtn, pressed && Platform.OS === 'ios' && { opacity: 0.85, transform: [{ scale: 0.99 }] }]}
+            accessibilityLabel="Change pickup location"
+            style={[styles.locationButton, { backgroundColor: t.colors.primarySoft, borderRadius: t.radius.pill }]}
           >
-            <Ionicons name="medical" size={24} color={t.onDanger} />
-            <Text style={styles.dispatchBtnText} maxFontSizeMultiplier={1.3}>Dispatch ambulance</Text>
+            <Ionicons name="locate-outline" size={20} color={t.colors.primary} />
           </Pressable>
         </View>
+
+        <LocationCard
+          label="Pickup location"
+          value={pickup ? pickup.address : 'Set your pickup point'}
+          detail={pickup ? (pickup.source === 'gps' ? 'From device GPS' : 'Manually selected') : 'Required before dispatch'}
+          icon="location-outline"
+          actionLabel="Change"
+          onPress={openLocationPicker}
+        />
+
+        {locationNote ? (
+          <View style={styles.note}>
+            <Notice
+              text={locationNote}
+              tone="warning"
+            />
+            <AppText variant="caption" color="primary" onPress={openLocationPicker}>
+              Choose manually
+            </AppText>
+          </View>
+        ) : null}
+
+        <Card style={styles.hero}>
+          <View style={[styles.heroIcon, { backgroundColor: t.colors.emergencySoft }]}>
+            <Ionicons name="medical" size={24} color={t.colors.emergency} />
+          </View>
+          <View style={styles.heroText}>
+            <AppText variant="heading">Emergency transport</AppText>
+            <AppText variant="caption" color="textMuted">
+              Tell us what happened, choose a hospital, and we&apos;ll send the request.
+            </AppText>
+          </View>
+        </Card>
+
+        <View style={styles.mapWrap}>
+          <TrackingMap
+            markers={markers}
+            route={route}
+            height={170}
+            caption={
+              selectedProvider
+                ? `${selectedProvider.vehicleType} · ${formatDistance(selectedProvider.proximityKm)} away`
+                : hasFleet
+                  ? `${providers!.length} AMBULANCES NEARBY`
+                  : 'WAITING FOR PICKUP'
+            }
+          />
+        </View>
+
+        {!coords ? (
+          <ErrorState
+            title="Pickup location needed"
+            message="Allow location access or choose a pickup point manually to see nearby ambulances."
+            actionLabel="Choose location"
+            onAction={openLocationPicker}
+          />
+        ) : busy ? (
+          <LoadingState message="Finding nearby ambulances…" />
+        ) : fleetState.error ? (
+          <ErrorState
+            title="Couldn't load nearby services"
+            message={fleetState.error}
+            actionLabel="Try again"
+            onAction={fleetState.reload}
+          />
+        ) : !hasFleet ? (
+          <EmptyState
+            icon="location-outline"
+            title="No ambulances in range"
+            message="Try a different pickup point or check again in a moment."
+            actionLabel="Change pickup point"
+            onAction={openLocationPicker}
+          />
+        ) : (
+          <>
+            <SectionHeader title="What's happening?" subtitle="Pick the closest match" />
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
+              {EMERGENCY_CATEGORIES.map((item) => {
+                const active = item === category
+                return (
+                  <Pressable
+                    key={item}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {})
+                      setCategory(item)
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: active }}
+                    accessibilityLabel={emergencyCategoryLabel(item)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: active ? t.colors.primary : t.colors.surface,
+                        borderColor: active ? t.colors.primary : t.colors.border,
+                      },
+                    ]}
+                  >
+                    <AppText variant="label" color={active ? 'onPrimary' : 'textMuted'}>
+                      {emergencyCategoryLabel(item)}
+                    </AppText>
+                  </Pressable>
+                )
+              })}
+            </ScrollView>
+
+            <SectionHeader title="Take me to" subtitle="Ranked by proximity" />
+            <View style={styles.list}>
+              {hospitals?.slice(0, 5).map((hospital) => (
+                <LocationCard
+                  key={hospital.id}
+                  label={hospital.isRecommended ? 'Nearest hospital' : 'Hospital'}
+                  value={hospital.name}
+                  detail={`${hospital.city} · ${formatDistance(hospital.distanceKm)}`}
+                  icon="business-outline"
+                  selected={hospital.id === hospitalId}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {})
+                    setHospitalChoice(hospital.id)
+                  }}
+                />
+              ))}
+            </View>
+
+            <SectionHeader title="Choose an ambulance" subtitle="Fares are set by dispatch" />
+            <View style={styles.list}>
+              {providers?.map((provider) => (
+                <AmbulanceStatusCard
+                  key={provider.id}
+                  name={provider.name}
+                  vehicleType={provider.vehicleType}
+                  detail={formatDistance(provider.proximityKm)}
+                  badgeLabel={provider.isRecommended ? 'Nearest' : undefined}
+                  selected={provider.id === providerId}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {})
+                    setProviderChoice(provider.id)
+                  }}
+                  right={
+                    <View style={styles.fareBlock}>
+                      <AppText variant="bodyStrong" color={provider.id === providerId ? 'primary' : 'text'}>
+                        {formatNairaFromNaira(provider.initialFareNGN)}
+                      </AppText>
+                      <AppText variant="micro" color="textFaint">
+                        STARTING FARE
+                      </AppText>
+                    </View>
+                  }
+                />
+              ))}
+            </View>
+
+            <SectionHeader title="Patient details" subtitle="For the responding crew" />
+            <Card style={styles.detailsCard}>
+              <View style={styles.switchRow}>
+                <View style={styles.switchText}>
+                  <AppText variant="bodyStrong">This request is for me</AppText>
+                  <AppText variant="caption" color="textMuted">
+                    Turn off if you&apos;re requesting for someone else.
+                  </AppText>
+                </View>
+                <Switch
+                  value={isForSelf}
+                  onValueChange={(value) => {
+                    Haptics.selectionAsync().catch(() => {})
+                    setIsForSelf(value)
+                  }}
+                  trackColor={{ false: t.colors.borderStrong, true: t.colors.primary }}
+                  thumbColor={t.colors.surface}
+                  ios_backgroundColor={t.colors.borderStrong}
+                  accessibilityLabel="This request is for me"
+                />
+              </View>
+
+              {!isForSelf ? (
+                <>
+                  <AppInput
+                    label="Patient's name"
+                    value={patientName}
+                    onChangeText={setPatientName}
+                    placeholder="Full name"
+                    autoCapitalize="words"
+                  />
+                  <AppInput
+                    label="Patient's phone"
+                    icon="call-outline"
+                    value={patientPhone}
+                    onChangeText={setPatientPhone}
+                    placeholder="+234 801 234 5678"
+                    keyboardType="phone-pad"
+                  />
+                </>
+              ) : null}
+
+              <AppInput
+                label="Crew callback number"
+                icon="call-outline"
+                value={callbackPhone}
+                onChangeText={setCallbackPhone}
+                placeholder="+234 801 234 5678"
+                keyboardType="phone-pad"
+                autoComplete="tel"
+              />
+              <AppInput
+                label="Notes for the crew (optional)"
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Landmark, access code, symptoms…"
+                multiline
+                numberOfLines={3}
+              />
+            </Card>
+          </>
+        )}
+
+        {recentBooking ? (
+          <>
+            <SectionHeader title="Recent trip" subtitle="Your latest request" />
+            <TripSummaryCard
+              reference={recentBooking.reference}
+              status={recentBooking.status}
+              pickup={recentBooking.pickupAddress || 'Your location'}
+              destination={recentBooking.destAddress || 'Destination'}
+              amount={formatNaira(recentBooking.estimatedFare)}
+              meta={formatDate(recentBooking.createdAt)}
+              onPress={() => router.push({ pathname: '/booking/[id]', params: { id: recentBooking.id } })}
+            />
+          </>
+        ) : null}
+      </ScrollView>
+
+      <View style={[styles.footer, { backgroundColor: t.colors.bgElevated, borderTopColor: t.colors.border }]}>
+        <View style={styles.fareRow}>
+          <View>
+            <AppText variant="caption" color="textMuted">
+              Server-estimated fare
+            </AppText>
+            <AppText variant="micro" color="textFaint">
+              Final fare is set by dispatch
+            </AppText>
+          </View>
+          <AppText variant="heading" color="primary">
+            {formatNairaFromNaira(selectedProvider?.initialFareNGN ?? 0)}
+          </AppText>
+        </View>
+
+        {error ? <Notice text={error} tone="danger" /> : null}
+
+        <EmergencyButton
+          label="Dispatch ambulance"
+          onPress={handleDispatch}
+          loading={submitting}
+          disabled={!hasFleet || !selectedProvider || !selectedHospital}
+        />
       </View>
-    </View>
+    </Screen>
   )
 }
 
-/* ---------------------------------- Styles ---------------------------------- */
-const makeStyles = (t: Theme) => {
-  const shadow = Platform.select({
-    ios: { shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-    android: { elevation: 6 },
-  })
-  return StyleSheet.create({
-    container: { flex: 1, backgroundColor: t.canvas },
-    statusPill: {
-      position: 'absolute', left: 16, flexDirection: 'row', alignItems: 'center', gap: 8,
-      backgroundColor: t.surface, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, ...shadow,
-    },
-    statusDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.ok },
-    statusText: { color: t.ink, fontSize: 15, fontWeight: '600' },
-    userDotOuter: { position: 'absolute', width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', ...shadow },
-    sheet: {
-      flex: 1, marginTop: -28, backgroundColor: t.canvas, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-      overflow: 'hidden', ...shadow,
-    },
-    handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: t.handle, marginTop: 10 },
-    sheetContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 },
-    sectionTitle: { color: t.ink, fontSize: 20, fontWeight: '700', marginBottom: 10 },
-    group: { gap: 10 },
-    row: {
-      flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, paddingHorizontal: 14, paddingVertical: 10,
-      backgroundColor: t.surface, borderRadius: 16, borderWidth: 2, borderColor: t.line,
-    },
-    rowActive: { borderColor: t.select, backgroundColor: t.selectBg },
-    rowIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: t.canvas, alignItems: 'center', justifyContent: 'center' },
-    rowTitle: { flex: 1, color: t.ink, fontSize: 17, fontWeight: '600' },
-    tag: {
-      flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 80, paddingRight: 14,
-      backgroundColor: t.surface, borderRadius: 16, borderWidth: 2, borderColor: t.line, overflow: 'hidden',
-    },
-    tagBand: { alignSelf: 'stretch', width: 10 },
-    tagBody: { flex: 1, paddingVertical: 12, gap: 6 },
-    tagMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-    typeBadge: { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 },
-    typeBadgeText: { fontSize: 13, fontWeight: '700' },
-    metaText: { color: t.muted, fontSize: 15 },
-    etaBlock: { alignItems: 'center', minWidth: 48 },
-    etaNumber: { color: t.ink, fontSize: 30, fontWeight: '800', lineHeight: 34, fontVariant: ['tabular-nums'] },
-    etaUnit: { color: t.muted, fontSize: 13, fontWeight: '600' },
-    footer: {
-      paddingHorizontal: 16, paddingTop: 12, backgroundColor: t.surface,
-      borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, gap: 10,
-    },
-    fareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-    fareLabel: { color: t.muted, fontSize: 16 },
-    fareValue: { color: t.ink, fontSize: 22, fontWeight: '800', fontVariant: ['tabular-nums'] },
-    dispatchBtn: {
-      minHeight: 64, borderRadius: 18, backgroundColor: t.danger, flexDirection: 'row',
-      alignItems: 'center', justifyContent: 'center', gap: 10,
-    },
-    dispatchBtnText: { color: t.onDanger, fontSize: 20, fontWeight: '800' },
-  })
-}
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 8, gap: 12 },
+  greeting: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 },
+  greetingText: { flex: 1, gap: 2 },
+  locationButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  note: { gap: 4 },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  heroIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  heroText: { flex: 1, gap: 4 },
+  mapWrap: { marginTop: 0 },
+  chips: { marginHorizontal: -20, paddingHorizontal: 20 },
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  list: { gap: 8 },
+  fareBlock: { alignItems: 'flex-end', minWidth: 74, gap: 2 },
+  detailsCard: { gap: 12 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  switchText: { flex: 1, gap: 2 },
+  detailField: { gap: 4 },
+  detailFieldsRow: { flexDirection: 'row', gap: 12 },
+  detailFieldFlex: { flex: 1, gap: 4 },
+  patientInputs: { gap: 12 },
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
+  fareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+})

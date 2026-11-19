@@ -1,80 +1,213 @@
+import { Ionicons } from '@expo/vector-icons'
+import * as Haptics from 'expo-haptics'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
-import { api } from '../../../src/services/api'
-import { useAuthStore } from '../../../src/store/authStore'
+import { Pressable, StyleSheet, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { AppInput, AppText, Button, Notice, Screen } from '@/components/ui'
+import { authService } from '@/services/auth.service'
+import { useAuthStore } from '@/store/authStore'
+import { useAppTheme } from '@/theme'
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('demo@medimove.ng')
-  const [password, setPassword] = useState('password123')
-  const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const setAuth = useAuthStore((state) => state.setAuth)
+  const t = useAppTheme()
+  const insets = useSafeAreaInsets()
+  const setAuth = useAuthStore((s) => s.setAuth)
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [emailError, setEmailError] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password')
-      return
-    }
+    const nextEmailError = email.trim() ? null : 'Enter your email address.'
+    const nextPasswordError = password ? null : 'Enter your password.'
+    setEmailError(nextEmailError)
+    setPasswordError(nextPasswordError)
+    if (nextEmailError || nextPasswordError) return
 
     setLoading(true)
+    setFormError(null)
     try {
-      const response: any = await api.post('/auth/login', { email, password })
-      await setAuth(response.user, response.token)
-      router.replace('/')
-    } catch (err: any) {
-      Alert.alert('Login Failed', err.message || 'Invalid credentials')
+      const res = await authService.login(email.trim(), password)
+      await setAuth(res.user, { accessToken: res.accessToken, refreshToken: res.refreshToken })
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      router.replace('/(tabs)')
+    } catch (err) {
+      setFormError((err as Error).message || 'Unable to sign in. Check your details and try again.')
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.brandTitle}>MediMove</Text>
-      <Text style={styles.subtitle}>Emergency Dispatch & Health Reserve</Text>
+    <Screen scroll avoidKeyboard contentStyle={styles.screen}>
+      <View style={[styles.hero, { paddingTop: insets.top + 32 }]}>
+        <View style={styles.brandRow}>
+          <View
+            style={[
+              styles.brandMark,
+              { backgroundColor: t.colors.primary, borderRadius: t.radius.sm },
+            ]}
+          >
+            <Ionicons name="medical" size={22} color={t.colors.onPrimary} />
+          </View>
+          <AppText variant="title">MediMove</AppText>
+        </View>
 
-      <View style={styles.form}>
-        <Text style={styles.label}>Email Address</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="user@domain.com"
-          placeholderTextColor="#64748B"
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          placeholder="••••••••"
-          placeholderTextColor="#64748B"
-          secureTextEntry
-        />
-
-        <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>Sign In</Text>
-          )}
-        </TouchableOpacity>
+        <View style={styles.heroCopy}>
+          <AppText variant="display">Welcome back</AppText>
+          <AppText variant="body" color="textMuted">
+            Sign in to request an ambulance and manage your health reserve.
+          </AppText>
+        </View>
       </View>
-    </View>
+
+      <View
+        style={[
+          styles.surface,
+          {
+            backgroundColor: t.colors.surface,
+            borderTopLeftRadius: t.radius.lg,
+            borderTopRightRadius: t.radius.lg,
+            paddingBottom: insets.bottom + t.spacing.xl,
+          },
+        ]}
+      >
+        <View style={styles.fields}>
+          <AppInput
+            label="Email address"
+            icon="mail-outline"
+            value={email}
+            onChangeText={(value) => {
+              setEmail(value)
+              if (emailError) setEmailError(null)
+            }}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
+            returnKeyType="next"
+            error={emailError ?? undefined}
+          />
+
+          <AppInput
+            label="Password"
+            icon="lock-closed-outline"
+            secure
+            value={password}
+            onChangeText={(value) => {
+              setPassword(value)
+              if (passwordError) setPasswordError(null)
+            }}
+            placeholder="Enter your password"
+            autoCapitalize="none"
+            autoComplete="current-password"
+            textContentType="password"
+            returnKeyType="go"
+            onSubmitEditing={() => void handleLogin()}
+            error={passwordError ?? undefined}
+          />
+        </View>
+
+        {formError ? <Notice text={formError} tone="danger" /> : null}
+
+        <Button
+          label="Sign in"
+          onPress={() => void handleLogin()}
+          loading={loading}
+          iconEnd="arrow-forward"
+        />
+
+        <View style={styles.security}>
+          <Ionicons name="lock-closed-outline" size={13} color={t.colors.textFaint} />
+          <AppText variant="micro" color="textFaint">
+            Your session is stored securely on this device.
+          </AppText>
+        </View>
+
+        <View style={styles.createAccount}>
+          <AppText variant="caption" color="textMuted">
+            New to MediMove?
+          </AppText>
+          <Pressable
+            onPress={() => router.push('/(auth)/register')}
+            accessibilityRole="link"
+            accessibilityLabel="Create an account"
+            hitSlop={8}
+            android_ripple={{ color: t.colors.primarySoft, borderless: true }}
+            style={({ pressed }) => [styles.link, pressed && styles.linkPressed]}
+          >
+            <AppText variant="button" color="secondary">
+              Create account
+            </AppText>
+          </Pressable>
+        </View>
+      </View>
+    </Screen>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#090D16', justifyContent: 'center', padding: 24 },
-  brandTitle: { fontSize: 36, fontWeight: 'bold', color: '#10B981', textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#94A3B8', textAlign: 'center', marginBottom: 40, marginTop: 4 },
-  form: { backgroundColor: '#0F172A', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#1E293B' },
-  label: { color: '#E2E8F0', fontSize: 13, marginBottom: 6, fontWeight: '600' },
-  input: { backgroundColor: '#1E293B', color: '#FFFFFF', padding: 12, borderRadius: 8, marginBottom: 16 },
-  button: { backgroundColor: '#10B981', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 8 },
-  buttonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
+  screen: {
+    flexGrow: 1,
+    paddingTop: 0,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+  },
+  hero: {
+    paddingHorizontal: 20,
+    gap: 32,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandMark: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroCopy: {
+    gap: 12,
+  },
+  surface: {
+    flex: 1,
+    marginTop: 32,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    gap: 20,
+  },
+  fields: {
+    gap: 20,
+  },
+  security: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  createAccount: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 'auto',
+    paddingTop: 24,
+  },
+  link: {
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+    borderRadius: 4,
+  },
+  linkPressed: {
+    opacity: 0.6,
+  },
 })

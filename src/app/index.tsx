@@ -1,49 +1,43 @@
 import { Redirect } from 'expo-router'
-import * as SecureStore from 'expo-secure-store'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { ActivityIndicator, StyleSheet, View } from 'react-native'
+import { BrandMark } from '../components/BrandMark'
+import { AppText, Screen } from '../components/ui'
+import { useAuthStore } from '../store/authStore'
+import { useAppTheme } from '../theme'
 
+/**
+ * Entry gate. Restores the session from stored tokens (validating via
+ * `/auth/me`) before deciding where to send the user.
+ */
 export default function RootIndex() {
-  const [isLoading, setIsLoading] = useState(true)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const status = useAuthStore((state) => state.status)
+  const bootstrap = useAuthStore((state) => state.bootstrap)
+  const t = useAppTheme()
 
   useEffect(() => {
-    checkToken()
-  }, [])
+    bootstrap()
+  }, [bootstrap])
 
-  const checkToken = async () => {
-    try {
-      const token = await SecureStore.getItemAsync('userToken')
-      setIsAuthenticated(!!token)
-    } catch {
-      setIsAuthenticated(false)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  // Render loading splash indicator while checking auth token
-  if (isLoading) {
+  if (status === 'loading') {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#10B981" />
-      </View>
+      <Screen>
+        <View style={styles.center}>
+          <BrandMark compact />
+          <ActivityIndicator size="small" color={t.colors.secondary} />
+          <AppText variant="caption" color="textMuted">
+            Restoring your session…
+          </AppText>
+        </View>
+      </Screen>
     )
   }
 
-  // Perform redirect based on auth status
-  if (isAuthenticated) {
-    return <Redirect href="/(tabs)" />
-  }
+  if (status === 'authenticated') return <Redirect href="/(tabs)" />
 
-  return <Redirect href="/(auth)/login" />
+  return <Redirect href="/(auth)/welcome" />
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#090D16',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24 },
 })
