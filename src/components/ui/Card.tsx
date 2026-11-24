@@ -56,7 +56,15 @@ export function Card({
   }
 
   return (
-    <View style={flattened} accessibilityRole={accessibilityLabel ? 'group' : undefined} accessibilityLabel={accessibilityLabel}>
+    <View
+      style={flattened}
+      accessible={Boolean(accessibilityLabel)}
+      // Android's native accessibility role enum does not accept `group`.
+      // Keep the grouping semantic on iOS, and use a labelled focusable view
+      // on Android instead so the screen does not crash.
+      accessibilityRole={Platform.OS === 'ios' && accessibilityLabel ? 'group' : undefined}
+      accessibilityLabel={accessibilityLabel}
+    >
       {content}
     </View>
   )

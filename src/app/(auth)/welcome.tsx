@@ -1,8 +1,8 @@
 import { BrandMark } from '@/components/BrandMark'
 import { AppText, Card, PrimaryButton, Screen, SecondaryButton } from '@/components/ui'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { useAppTheme } from '@/theme'
 import { Ionicons } from '@expo/vector-icons'
-import { useRouter } from 'expo-router'
 import { StyleSheet, View } from 'react-native'
 
 const FEATURES = [
@@ -12,7 +12,7 @@ const FEATURES = [
 ] as const
 
 export default function WelcomeScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
 
   return (
@@ -53,12 +53,12 @@ export default function WelcomeScreen() {
           label="Create an account"
           size="lg"
           icon="person-add-outline"
-          onPress={() => router.push('/(auth)/register')}
+          onPress={() => navigation.navigate('/(auth)/register')}
         />
         <SecondaryButton
           label="I already have an account"
           size="lg"
-          onPress={() => router.push('/(auth)/login')}
+          onPress={() => navigation.navigate('/(auth)/login')}
         />
         <AppText variant="caption" color="textFaint" center>
           Your details are used only to coordinate transport and care.

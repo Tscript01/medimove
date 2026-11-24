@@ -9,10 +9,12 @@ import {
   Screen,
   SecondaryButton,
 } from '@/components/ui'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { authService } from '@/services/auth.service'
 import { useAuthStore } from '@/store/authStore'
+import { homeForRole } from '@/utils/roleRouting'
 import * as Haptics from 'expo-haptics'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native'
 
@@ -24,7 +26,7 @@ const EXPIRY_MINUTES = 5
 type ApiError = Error & { code?: string; attemptsRemaining?: number; retryAfterSeconds?: number }
 
 export default function VerifyScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const { email: emailParam } = useLocalSearchParams<{ email?: string }>()
@@ -59,7 +61,7 @@ export default function VerifyScreen() {
       const res = await authService.verifyEmail(email.trim(), value)
       await setAuth(res.user, { accessToken: res.accessToken, refreshToken: res.refreshToken })
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      router.replace('/(tabs)')
+      navigation.replace(homeForRole(res.user.role))
     } catch (err) {
       const e = err as ApiError
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -122,7 +124,7 @@ export default function VerifyScreen() {
               : 'Enter the 6-digit code we emailed you.'
           }
           showBack
-          onBack={() => router.replace('/(auth)/login')}
+          onBack={() => navigation.replace('/(auth)/login')}
           compact
           hideDivider
         />

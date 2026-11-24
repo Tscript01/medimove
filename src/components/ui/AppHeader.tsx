@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons'
-import { useRouter } from 'expo-router'
 import type { ReactNode } from 'react'
 import { Platform, Pressable, StyleSheet, View } from 'react-native'
+import { useSafeNavigation } from '../../hooks/useSafeNavigation'
 import { useAppTheme, type ThemeColors } from '../../theme'
 import { AppText } from './AppText'
 
@@ -10,7 +10,7 @@ export interface AppHeaderProps {
   subtitle?: string
   /** Show a back button. Defaults to false for tab roots. */
   showBack?: boolean
-  /** Override the default router.back() action. */
+  /** Override the default navigation back action. */
   onBack?: () => void
   /** Optional trailing control area, aligned to the right of the title. */
   right?: ReactNode
@@ -31,7 +31,7 @@ export function AppHeader({
   hideDivider = false,
 }: AppHeaderProps) {
   const t = useAppTheme()
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const fg: keyof ThemeColors = 'text'
 
   return (
@@ -44,7 +44,7 @@ export function AppHeader({
     >
       {showBack ? (
         <Pressable
-          onPress={onBack ?? (() => router.back())}
+          onPress={onBack ?? (() => navigation.back())}
           hitSlop={10}
           accessibilityRole="button"
           accessibilityLabel="Go back"

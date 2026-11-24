@@ -1,41 +1,33 @@
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import * as Location from 'expo-location'
-import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native'
-import { TrackingMap, type MapMarker } from '@/components/TrackingMap'
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
+import { MapCanvas, type MapMarker } from '@/components/MapCanvas'
 import {
-  AmbulanceStatusCard,
-  AppInput,
   AppText,
+  Avatar,
+  Badge,
+  BottomSheet,
   Card,
+  ConfirmationSheet,
   EmergencyButton,
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  LocationCard,
   Notice,
+  PrimaryButton,
   Screen,
-  SectionHeader,
-  TripSummaryCard,
+  StatusBadge,
 } from '@/components/ui'
 import { useAsync } from '@/hooks/useAsync'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { bookingService } from '@/services/booking.service'
-import { fleetService } from '@/services/fleet.service'
+import { locationService } from '@/services/location.service'
 import { useAuthStore } from '@/store/authStore'
+import { useJourneyStore } from '@/store/journeyStore'
 import { useLocationStore } from '@/store/locationStore'
 import { useAppTheme } from '@/theme'
-import type { EmergencyCategory, RankedHospital } from '@/types'
-import {
-  EMERGENCY_CATEGORIES,
-  emergencyCategoryLabel,
-  formatDate,
-  formatDistance,
-  formatNaira,
-  formatNairaFromNaira,
-} from '@/utils/format'
-import { makeIdempotencyKey } from '@/utils/id'
+import { bookingStatusMeta, formatDateTime, isActiveBookingStatus } from '@/utils/format'
+
+const GPS_TIMEOUT_MS = 9000
 
 function greeting(): string {
   const hour = new Date().getHours()
@@ -45,65 +37,60 @@ function greeting(): string {
 }
 
 export default function HomeScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
   const user = useAuthStore((state) => state.user)
   const pickup = useLocationStore((state) => state.pickup)
   const setPickup = useLocationStore((state) => state.setPickup)
+  const journey = useJourneyStore((state) => state.session)
 
   const [locating, setLocating] = useState(false)
   const [locationNote, setLocationNote] = useState<string | null>(null)
-
-  const [category, setCategory] = useState<EmergencyCategory>('MEDICAL')
-  const [hospitalChoice, setHospitalChoice] = useState<string | null>(null)
-  const [providerChoice, setProviderChoice] = useState<string | null>(null)
-  const [callbackPhone, setCallbackPhone] = useState(user?.phone ?? '')
-  const [isForSelf, setIsForSelf] = useState(true)
-  const [patientName, setPatientName] = useState('')
-  const [patientPhone, setPatientPhone] = useState('')
-  const [notes, setNotes] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [transportSheetOpen, setTransportSheetOpen] = useState(false)
+  const [duplicateWarningOpen, setDuplicateWarningOpen] = useState(false)
 
   const openLocationPicker = useCallback(() => {
-    router.push('/location-picker')
-  }, [router])
-
-  /* ------------------------------- Location -------------------------------- */
+    navigation.navigate('/location-picker')
+  }, [navigation])
 
   const requestLocation = useCallback(async () => {
     setLocating(true)
     setLocationNote(null)
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') {
+      const permission = await Location.requestForegroundPermissionsAsync()
+      if (permission.status !== 'granted') {
         setLocationNote('Location permission is off. Choose a pickup point manually.')
         return
       }
 
-      let position: Location.LocationObject | null = null
-      try {
-        position = await Location.getLastKnownPositionAsync({ maxAge: 60_000 })
-      } catch {
-        // No cached fix; fall through to a fresh one.
-      }
+      const position = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), GPS_TIMEOUT_MS)),
+      ])
+
       if (!position) {
-        position = await Promise.race([
-          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-        ])
+        setLocationNote('No GPS fix yet. Choose a pickup point manually.')
+        return
       }
 
-      if (position) {
-        setPickup({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          address: 'Current location',
-          source: 'gps',
-        })
-      } else {
-        setLocationNote('No GPS fix yet. Choose a pickup point manually.')
+      const age = Date.now() - position.timestamp
+      if (age > 120_000) {
+        setLocationNote('The device location is out of date. Choose a pickup point manually.')
+        return
       }
+
+      const latitude = position.coords.latitude
+      const longitude = position.coords.longitude
+      let address = 'Current location'
+
+      try {
+        const response = await locationService.reverse(latitude, longitude)
+        if (response.result?.address) address = response.result.address
+      } catch {
+        // Coordinates remain usable; the UI still shows a readable label.
+      }
+
+      setPickup({ lat: latitude, lng: longitude, address, source: 'gps', confirmed: false })
     } catch {
       setLocationNote('Location is unavailable. Choose a pickup point manually.')
     } finally {
@@ -111,8 +98,6 @@ export default function HomeScreen() {
     }
   }, [setPickup])
 
-  // Initial GPS lookup is an Effect event: it is triggered by mount, while the
-  // same callback remains available to the UI's "Use my location" action.
   const locateOnMount = useEffectEvent(() => {
     if (!useLocationStore.getState().pickup) void requestLocation()
   })
@@ -121,396 +106,308 @@ export default function HomeScreen() {
     void Promise.resolve().then(() => locateOnMount())
   }, [])
 
-  /* --------------------------------- Fleet --------------------------------- */
-
-  const coords = useMemo(
-    () => (pickup ? { lat: pickup.lat, lng: pickup.lng } : null),
-    [pickup]
+  const bookingsState = useAsync(() => bookingService.list({ limit: 10 }), [])
+  const activeRequest = useMemo(
+    () => (bookingsState.data?.bookings ?? []).find((booking) => isActiveBookingStatus(booking.status)) ?? null,
+    [bookingsState.data]
   )
 
-  const fleetState = useAsync(async () => {
-    if (!coords) return null
-    return fleetService.getFleet(coords.lat, coords.lng)
-  }, [coords?.lat, coords?.lng])
+  const activeRequestId = activeRequest?.id
+  const refreshActiveRequest = bookingsState.refresh
+  useEffect(() => {
+    if (!activeRequestId) return
+    const interval = setInterval(() => void refreshActiveRequest(), 10_000)
+    return () => clearInterval(interval)
+  }, [activeRequestId, refreshActiveRequest])
 
-  const recentState = useAsync(() => bookingService.list({ limit: 1 }), [])
-  const recentBooking = recentState.data?.bookings?.[0] ?? null
-
-  const hospitals = fleetState.data?.hospitals
-  const providers = fleetState.data?.data
-  const serverAddress = fleetState.data?.userLocation?.pickupAddress
-  const pickupAddress = pickup?.source === 'gps'
-    ? serverAddress ?? pickup.address
-    : pickup?.address ?? serverAddress ?? 'Your current location'
-
-  // Defaults are derived, not written back into state, so a fleet refresh
-  // never triggers an extra render just to re-select the recommended option.
-  const hospitalId = hospitalChoice ?? (hospitals?.find((h) => h.isRecommended) ?? hospitals?.[0])?.id ?? null
-  const providerId = providerChoice ?? (providers?.find((p) => p.isRecommended) ?? providers?.[0])?.id ?? null
-
-  const selectedHospital: RankedHospital | null = hospitals?.find((h) => h.id === hospitalId) ?? null
-  const selectedProvider = providers?.find((p) => p.id === providerId) ?? null
+  const activeJourney = journey?.status === 'active' ? journey : null
+  const firstName = user?.fullName?.trim().split(/\s+/)[0]
+  const statusMeta = activeRequest ? bookingStatusMeta(activeRequest.status) : null
 
   const markers: MapMarker[] = useMemo(() => {
-    const list: MapMarker[] = []
-    if (coords) list.push({ id: 'me', latitude: coords.lat, longitude: coords.lng, kind: 'user', label: 'You' })
-    if (selectedProvider) {
-      list.push({
-        id: selectedProvider.id,
-        latitude: selectedProvider.latitude,
-        longitude: selectedProvider.longitude,
-        kind: 'ambulance',
-        label: selectedProvider.vehicleType,
-      })
-    }
-    if (selectedHospital) {
-      list.push({
-        id: selectedHospital.id,
-        latitude: selectedHospital.lat,
-        longitude: selectedHospital.lng,
-        kind: 'hospital',
-        label: 'Hospital',
-      })
-    }
-    return list
-  }, [coords, selectedProvider, selectedHospital])
+    if (!pickup) return []
+    return [{ id: 'pickup', latitude: pickup.lat, longitude: pickup.lng, kind: 'user', label: 'Pickup' }]
+  }, [pickup])
 
-  const route = useMemo(() => {
-    if (!coords || !selectedProvider) return []
-    return [
-      { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
-      { latitude: coords.lat, longitude: coords.lng },
-    ]
-  }, [coords, selectedProvider])
+  const mapCaption = pickup
+    ? pickup.confirmed
+      ? 'Confirmed pickup point'
+      : 'GPS · confirm before requesting'
+    : locating
+      ? 'Finding your location…'
+      : locationNote
+        ? 'LOCATION NEEDED'
+        : 'SET A PICKUP POINT'
 
-  /* -------------------------------- Dispatch ------------------------------- */
-
-  const handleDispatch = async () => {
-    if (!coords || !selectedProvider || !selectedHospital) {
-      setError('Choose a pickup point, then wait for nearby ambulances to load.')
-      return
-    }
-    if (!callbackPhone.trim()) {
-      setError('Add a phone number the crew can call you on.')
-      return
-    }
-    if (!isForSelf && (!patientName.trim() || !patientPhone.trim())) {
-      setError('Add the patient’s name and phone number.')
-      return
-    }
-
-    setSubmitting(true)
-    setError(null)
-    try {
-      const res = await bookingService.create({
-        providerId: selectedProvider.id,
-        pickupLat: coords.lat,
-        pickupLng: coords.lng,
-        pickupAddress,
-        destinationHospitalId: selectedHospital.id,
-        destAddress: selectedHospital.name,
-        callbackPhone: callbackPhone.trim(),
-        emergencyCategory: category,
-        isForSelf,
-        patientName: isForSelf ? undefined : patientName.trim(),
-        patientPhone: isForSelf ? undefined : patientPhone.trim(),
-        notes: notes.trim() || undefined,
-        idempotencyKey: makeIdempotencyKey(),
-      })
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      router.push({ pathname: '/booking/[id]', params: { id: res.booking.id } })
-    } catch (err) {
-      setError((err as Error).message || 'We could not dispatch an ambulance. Please try again.')
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-    } finally {
-      setSubmitting(false)
-    }
+  const openRequest = (mode: 'emergency' | 'urgent' | 'routine') => {
+    Haptics.selectionAsync().catch(() => {})
+    setTransportSheetOpen(false)
+    navigation.navigate({ pathname: '/request/[mode]', params: { mode } })
   }
 
-  const busy = locating || (fleetState.loading && !fleetState.data)
-  const hasFleet = Boolean(providers?.length)
-  const firstName = user?.fullName?.trim().split(/\s+/)[0]
+  const handleEmergencyPress = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {})
+    if (activeRequest) {
+      setDuplicateWarningOpen(true)
+      return
+    }
+    openRequest('emergency')
+  }
 
   return (
-    <Screen safeTop padded={false}>
+    <Screen padded={false}>
       <ScrollView
         style={styles.flex}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: t.spacing.lg }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: t.spacing.md }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={bookingsState.refreshing}
+            onRefresh={bookingsState.refresh}
+            tintColor={t.colors.primary}
+          />
+        }
       >
         <View style={styles.greeting}>
           <View style={styles.greetingText}>
             <AppText variant="caption" color="textMuted">
               {greeting()}
             </AppText>
-            <AppText variant="title">{firstName ? `${greeting()}, ${firstName}` : 'Need help?'}</AppText>
+            <AppText variant="display" numberOfLines={1}>
+              {firstName ? `${firstName}, where to?` : 'Where do you need to go?'}
+            </AppText>
           </View>
           <Pressable
-            onPress={openLocationPicker}
+            onPress={() => bookingsState.refresh()}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh requests"
+            style={styles.refreshButton}
+          >
+            <Ionicons name="refresh-outline" size={20} color={t.colors.primary} />
+          </Pressable>
+          <Pressable
+            onPress={() => navigation.navigate('/(tabs)/profile')}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Change pickup location"
-            style={[styles.locationButton, { backgroundColor: t.colors.primarySoft, borderRadius: t.radius.pill }]}
+            accessibilityLabel="Open profile"
+          >
+            <Avatar name={user?.fullName ?? 'Guest'} size={42} />
+          </Pressable>
+        </View>
+
+        <View style={styles.mapWrap}>
+          <MapCanvas
+            markers={markers}
+            height={232}
+            caption={mapCaption}
+            accessibilityLabel={pickup ? `Map showing pickup at ${pickup.address}` : 'Map awaiting pickup location'}
+          />
+          <Pressable
+            onPress={openLocationPicker}
+            accessibilityRole="button"
+            accessibilityLabel="Edit pickup location"
+            style={[styles.mapEdit, { backgroundColor: t.colors.bgElevated, borderRadius: t.radius.pill }]}
+          >
+            <Ionicons name="create-outline" size={16} color={t.colors.primary} />
+            <AppText variant="label" color="primary">
+              Edit
+            </AppText>
+          </Pressable>
+          <Pressable
+            onPress={() => void requestLocation()}
+            disabled={locating}
+            accessibilityRole="button"
+            accessibilityLabel={locating ? 'Finding your current location' : 'Use my current location'}
+            accessibilityState={{ disabled: locating, busy: locating }}
+            style={[
+              styles.mapLocate,
+              {
+                backgroundColor: t.colors.surface,
+                borderColor: t.colors.border,
+                borderRadius: t.radius.md,
+              },
+            ]}
           >
             <Ionicons name="locate-outline" size={20} color={t.colors.primary} />
           </Pressable>
         </View>
 
-        <LocationCard
-          label="Pickup location"
-          value={pickup ? pickup.address : 'Set your pickup point'}
-          detail={pickup ? (pickup.source === 'gps' ? 'From device GPS' : 'Manually selected') : 'Required before dispatch'}
-          icon="location-outline"
-          actionLabel="Change"
+        <Pressable
           onPress={openLocationPicker}
-        />
+          accessibilityRole="button"
+          accessibilityLabel={`Pickup location: ${pickup?.address ?? 'not set'}. Change pickup location`}
+          style={[styles.pickupRow, { backgroundColor: t.colors.surface, borderColor: t.colors.border, borderRadius: t.radius.md }]}
+        >
+          <View style={[styles.pickupIcon, { backgroundColor: t.colors.primarySoft, borderRadius: t.radius.sm }]}>
+            <Ionicons name="location-outline" size={19} color={t.colors.primary} />
+          </View>
+          <View style={styles.pickupText}>
+            <AppText variant="label" color="textMuted">
+              PICKUP
+            </AppText>
+            <AppText variant="body" numberOfLines={1}>
+              {pickup?.address ?? 'Set your pickup point'}
+            </AppText>
+            {pickup?.landmark ? (
+              <AppText variant="caption" color="textMuted" numberOfLines={1}>
+                {pickup.landmark}
+              </AppText>
+            ) : null}
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={t.colors.textFaint} />
+        </Pressable>
 
         {locationNote ? (
-          <View style={styles.note}>
-            <Notice
-              text={locationNote}
-              tone="warning"
-            />
-            <AppText variant="caption" color="primary" onPress={openLocationPicker}>
-              Choose manually
-            </AppText>
-          </View>
+          <Notice
+            text={locationNote}
+            tone="warning"
+            actionLabel="Choose manually"
+            onAction={openLocationPicker}
+          />
         ) : null}
 
-        <Card style={styles.hero}>
-          <View style={[styles.heroIcon, { backgroundColor: t.colors.emergencySoft }]}>
-            <Ionicons name="medical" size={24} color={t.colors.emergency} />
-          </View>
-          <View style={styles.heroText}>
-            <AppText variant="heading">Emergency transport</AppText>
-            <AppText variant="caption" color="textMuted">
-              Tell us what happened, choose a hospital, and we&apos;ll send the request.
-            </AppText>
-          </View>
-        </Card>
-
-        <View style={styles.mapWrap}>
-          <TrackingMap
-            markers={markers}
-            route={route}
-            height={170}
-            caption={
-              selectedProvider
-                ? `${selectedProvider.vehicleType} · ${formatDistance(selectedProvider.proximityKm)} away`
-                : hasFleet
-                  ? `${providers!.length} AMBULANCES NEARBY`
-                  : 'WAITING FOR PICKUP'
-            }
-          />
-        </View>
-
-        {!coords ? (
-          <ErrorState
-            title="Pickup location needed"
-            message="Allow location access or choose a pickup point manually to see nearby ambulances."
-            actionLabel="Choose location"
-            onAction={openLocationPicker}
-          />
-        ) : busy ? (
-          <LoadingState message="Finding nearby ambulances…" />
-        ) : fleetState.error ? (
-          <ErrorState
-            title="Couldn't load nearby services"
-            message={fleetState.error}
-            actionLabel="Try again"
-            onAction={fleetState.reload}
-          />
-        ) : !hasFleet ? (
-          <EmptyState
-            icon="location-outline"
-            title="No ambulances in range"
-            message="Try a different pickup point or check again in a moment."
-            actionLabel="Change pickup point"
-            onAction={openLocationPicker}
-          />
-        ) : (
-          <>
-            <SectionHeader title="What's happening?" subtitle="Pick the closest match" />
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
-              {EMERGENCY_CATEGORIES.map((item) => {
-                const active = item === category
-                return (
-                  <Pressable
-                    key={item}
-                    onPress={() => {
-                      Haptics.selectionAsync().catch(() => {})
-                      setCategory(item)
-                    }}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: active }}
-                    accessibilityLabel={emergencyCategoryLabel(item)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: active ? t.colors.primary : t.colors.surface,
-                        borderColor: active ? t.colors.primary : t.colors.border,
-                      },
-                    ]}
-                  >
-                    <AppText variant="label" color={active ? 'onPrimary' : 'textMuted'}>
-                      {emergencyCategoryLabel(item)}
-                    </AppText>
-                  </Pressable>
-                )
-              })}
-            </ScrollView>
-
-            <SectionHeader title="Take me to" subtitle="Ranked by proximity" />
-            <View style={styles.list}>
-              {hospitals?.slice(0, 5).map((hospital) => (
-                <LocationCard
-                  key={hospital.id}
-                  label={hospital.isRecommended ? 'Nearest hospital' : 'Hospital'}
-                  value={hospital.name}
-                  detail={`${hospital.city} · ${formatDistance(hospital.distanceKm)}`}
-                  icon="business-outline"
-                  selected={hospital.id === hospitalId}
-                  onPress={() => {
-                    Haptics.selectionAsync().catch(() => {})
-                    setHospitalChoice(hospital.id)
-                  }}
-                />
-              ))}
-            </View>
-
-            <SectionHeader title="Choose an ambulance" subtitle="Fares are set by dispatch" />
-            <View style={styles.list}>
-              {providers?.map((provider) => (
-                <AmbulanceStatusCard
-                  key={provider.id}
-                  name={provider.name}
-                  vehicleType={provider.vehicleType}
-                  detail={formatDistance(provider.proximityKm)}
-                  badgeLabel={provider.isRecommended ? 'Nearest' : undefined}
-                  selected={provider.id === providerId}
-                  onPress={() => {
-                    Haptics.selectionAsync().catch(() => {})
-                    setProviderChoice(provider.id)
-                  }}
-                  right={
-                    <View style={styles.fareBlock}>
-                      <AppText variant="bodyStrong" color={provider.id === providerId ? 'primary' : 'text'}>
-                        {formatNairaFromNaira(provider.initialFareNGN)}
-                      </AppText>
-                      <AppText variant="micro" color="textFaint">
-                        STARTING FARE
-                      </AppText>
-                    </View>
-                  }
-                />
-              ))}
-            </View>
-
-            <SectionHeader title="Patient details" subtitle="For the responding crew" />
-            <Card style={styles.detailsCard}>
-              <View style={styles.switchRow}>
-                <View style={styles.switchText}>
-                  <AppText variant="bodyStrong">This request is for me</AppText>
-                  <AppText variant="caption" color="textMuted">
-                    Turn off if you&apos;re requesting for someone else.
-                  </AppText>
-                </View>
-                <Switch
-                  value={isForSelf}
-                  onValueChange={(value) => {
-                    Haptics.selectionAsync().catch(() => {})
-                    setIsForSelf(value)
-                  }}
-                  trackColor={{ false: t.colors.borderStrong, true: t.colors.primary }}
-                  thumbColor={t.colors.surface}
-                  ios_backgroundColor={t.colors.borderStrong}
-                  accessibilityLabel="This request is for me"
-                />
+        {activeRequest && statusMeta ? (
+          <Card
+            onPress={() => navigation.navigate({ pathname: '/booking/[id]', params: { id: activeRequest.id } })}
+            accessibilityLabel={`Active request ${activeRequest.reference}, ${statusMeta.label}. Open tracking`}
+            borderColor="primary"
+            style={styles.activeCard}
+          >
+            <View style={styles.activeTop}>
+              <View style={styles.activeHeading}>
+                <AppText variant="label" color="textMuted">
+                  ACTIVE REQUEST · {activeRequest.reference}
+                </AppText>
+                <AppText variant="subheading" numberOfLines={1}>
+                  {statusMeta.label}
+                </AppText>
               </View>
+              <StatusBadge status={activeRequest.status} />
+            </View>
+            <AppText variant="caption" color="textMuted" numberOfLines={1}>
+              {activeRequest.pickupAddress || 'Your location'} → {activeRequest.destAddress || 'Destination'}
+            </AppText>
+            <View style={styles.activeFoot}>
+              <AppText variant="caption" color="primary">
+                View progress
+              </AppText>
+              <Ionicons name="navigate" size={16} color={t.colors.primary} />
+            </View>
+          </Card>
+        ) : null}
 
-              {!isForSelf ? (
-                <>
-                  <AppInput
-                    label="Patient's name"
-                    value={patientName}
-                    onChangeText={setPatientName}
-                    placeholder="Full name"
-                    autoCapitalize="words"
-                  />
-                  <AppInput
-                    label="Patient's phone"
-                    icon="call-outline"
-                    value={patientPhone}
-                    onChangeText={setPatientPhone}
-                    placeholder="+234 801 234 5678"
-                    keyboardType="phone-pad"
-                  />
-                </>
-              ) : null}
-
-              <AppInput
-                label="Crew callback number"
-                icon="call-outline"
-                value={callbackPhone}
-                onChangeText={setCallbackPhone}
-                placeholder="+234 801 234 5678"
-                keyboardType="phone-pad"
-                autoComplete="tel"
-              />
-              <AppInput
-                label="Notes for the crew (optional)"
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Landmark, access code, symptoms…"
-                multiline
-                numberOfLines={3}
-              />
-            </Card>
-          </>
-        )}
-
-        {recentBooking ? (
-          <>
-            <SectionHeader title="Recent trip" subtitle="Your latest request" />
-            <TripSummaryCard
-              reference={recentBooking.reference}
-              status={recentBooking.status}
-              pickup={recentBooking.pickupAddress || 'Your location'}
-              destination={recentBooking.destAddress || 'Destination'}
-              amount={formatNaira(recentBooking.estimatedFare)}
-              meta={formatDate(recentBooking.createdAt)}
-              onPress={() => router.push({ pathname: '/booking/[id]', params: { id: recentBooking.id } })}
-            />
-          </>
+        {activeJourney ? (
+          <Card
+            onPress={() => navigation.navigate('/journey/live')}
+            accessibilityLabel="Open your active device-only journey"
+            style={styles.activeCard}
+          >
+            <View style={styles.activeTop}>
+              <View style={styles.activeHeading}>
+                <AppText variant="label" color="textMuted">
+                  YOUR JOURNEY · ON THIS DEVICE
+                </AppText>
+                <AppText variant="subheading" numberOfLines={1}>
+                  {activeJourney.destination.name}
+                </AppText>
+              </View>
+              <Badge label="Local only" tone="info" />
+            </View>
+            <AppText variant="caption" color="textMuted">
+              {activeJourney.lastFix
+                ? `Last updated ${formatDateTime(activeJourney.lastFix.recordedAt)}`
+                : 'Waiting for location updates'}
+            </AppText>
+          </Card>
         ) : null}
       </ScrollView>
 
       <View style={[styles.footer, { backgroundColor: t.colors.bgElevated, borderTopColor: t.colors.border }]}>
-        <View style={styles.fareRow}>
-          <View>
-            <AppText variant="caption" color="textMuted">
-              Server-estimated fare
+        {activeRequest ? (
+          <PrimaryButton
+            label="View active request"
+            icon="navigate-outline"
+            onPress={() => navigation.navigate({ pathname: '/booking/[id]', params: { id: activeRequest.id } })}
+          />
+        ) : (
+          <EmergencyButton label="Request Emergency Ambulance" onPress={handleEmergencyPress} />
+        )}
+
+        <View style={styles.secondaryRow}>
+          <Pressable
+            onPress={() => setTransportSheetOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Medical Transport or Checkup"
+            style={[styles.secondaryAction, { borderColor: t.colors.border, borderRadius: t.radius.md }]}
+          >
+            <Ionicons name="medical-outline" size={19} color={t.colors.primary} />
+            <AppText variant="label" color="text">
+              Medical Transport / Checkup
             </AppText>
-            <AppText variant="micro" color="textFaint">
-              Final fare is set by dispatch
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {})
+              navigation.navigate('/journey/setup')
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Track My Journey"
+            style={[styles.secondaryAction, { borderColor: t.colors.border, borderRadius: t.radius.md }]}
+          >
+            <Ionicons name="navigate-outline" size={19} color={t.colors.primary} />
+            <AppText variant="label" color="text">
+              Track My Journey
             </AppText>
-          </View>
-          <AppText variant="heading" color="primary">
-            {formatNairaFromNaira(selectedProvider?.initialFareNGN ?? 0)}
-          </AppText>
+          </Pressable>
         </View>
 
-        {error ? <Notice text={error} tone="danger" /> : null}
-
-        <EmergencyButton
-          label="Dispatch ambulance"
-          onPress={handleDispatch}
-          loading={submitting}
-          disabled={!hasFleet || !selectedProvider || !selectedHospital}
-        />
+        {activeRequest ? (
+          <Pressable
+            onPress={() => setDuplicateWarningOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Request another ambulance"
+            style={styles.quietLink}
+          >
+            <AppText variant="caption" color="textMuted">
+              Need another ambulance?
+            </AppText>
+          </Pressable>
+        ) : null}
       </View>
+
+      <BottomSheet visible={transportSheetOpen} onClose={() => setTransportSheetOpen(false)} title="Choose transport" subtitle="No severity questions for routine checkups.">
+        <View style={styles.sheetOptions}>
+          <PrimaryButton
+            label="Urgent Medical Transport"
+            icon="time-outline"
+            onPress={() => openRequest('urgent')}
+          />
+          <PrimaryButton
+            label="Routine Checkup"
+            icon="calendar-outline"
+            onPress={() => openRequest('routine')}
+          />
+          <AppText variant="caption" color="textMuted">
+            Dispatch applies its own safety and operational rules to every request.
+          </AppText>
+        </View>
+      </BottomSheet>
+
+      <ConfirmationSheet
+        visible={duplicateWarningOpen}
+        onClose={() => setDuplicateWarningOpen(false)}
+        title="Request already in progress"
+        message="You already have an active MediMove request. Opening another can create a duplicate."
+        confirmLabel="View active request"
+        cancelLabel="Go back"
+        onConfirm={() => {
+          setDuplicateWarningOpen(false)
+          if (activeRequest) {
+            navigation.navigate({ pathname: '/booking/[id]', params: { id: activeRequest.id } })
+          }
+        }}
+      />
     </Screen>
   )
 }
@@ -518,36 +415,61 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingTop: 8, gap: 12 },
-  greeting: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 },
+  greeting: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   greetingText: { flex: 1, gap: 2 },
-  locationButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  note: { gap: 4 },
-  hero: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  heroIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  heroText: { flex: 1, gap: 4 },
-  mapWrap: { marginTop: 0 },
-  chips: { marginHorizontal: -20, paddingHorizontal: 20 },
-  chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-    marginRight: 8,
+  refreshButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  mapWrap: { position: 'relative' },
+  mapEdit: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    minHeight: 44,
+    paddingHorizontal: 12,
   },
-  list: { gap: 8 },
-  fareBlock: { alignItems: 'flex-end', minWidth: 74, gap: 2 },
-  detailsCard: { gap: 12 },
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  switchText: { flex: 1, gap: 2 },
-  detailField: { gap: 4 },
-  detailFieldsRow: { flexDirection: 'row', gap: 12 },
-  detailFieldFlex: { flex: 1, gap: 4 },
-  patientInputs: { gap: 12 },
+  mapLocate: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pickupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pickupIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  pickupText: { flex: 1, gap: 1 },
+  activeCard: { gap: 8 },
+  activeTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  activeHeading: { flex: 1, gap: 3 },
+  activeFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
   footer: {
     paddingHorizontal: 20,
     paddingTop: 12,
+    paddingBottom: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
     gap: 10,
   },
-  fareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  secondaryRow: { flexDirection: 'row', gap: 10 },
+  secondaryAction: {
+    flex: 1,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  quietLink: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  sheetOptions: { gap: 12 },
 })

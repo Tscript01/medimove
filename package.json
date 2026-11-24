@@ -5,7 +5,7 @@
   "dependencies": {
     "@expo/ui": "~58.0.29",
     "@expo/vector-icons": "^15.1.1",
-    "@rnmapbox/maps": "^10.3.16",
+    "@rnmapbox/maps": "10.3.19",
     "@rnmapbox/navigation": "^0.1.2",
     "axios": "^1.21.0",
     "expo": "~58.0.26",

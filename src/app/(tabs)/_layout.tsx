@@ -6,6 +6,7 @@ import { Platform, Text, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuthStore } from '@/store/authStore'
 import { FONT_FAMILY, useAppTheme } from '@/theme'
+import { homeForRole } from '@/utils/roleRouting'
 
 type IconName = ComponentProps<typeof Ionicons>['name']
 
@@ -28,6 +29,7 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets()
   const { fontScale } = useWindowDimensions()
   const status = useAuthStore((state) => state.status)
+  const role = useAuthStore((state) => state.user?.role)
 
   const scale = Math.min(Math.max(fontScale, 1), MAX_FONT_SCALE)
   const labelSize = BASE_LABEL_SIZE
@@ -39,6 +41,12 @@ export default function TabLayout() {
   // Session revoked/expired mid-use (refresh token rejected): send to login.
   if (status === 'unauthenticated') {
     return <Redirect href="/(auth)/login" />
+  }
+
+  // The requester tabs are patient-only. Crew has its own navigator and the
+  // operational roles belong in the web consoles.
+  if (status === 'authenticated' && role !== 'PATIENT') {
+    return <Redirect href={homeForRole(role)} />
   }
 
   return (

@@ -172,6 +172,8 @@ export interface BookingStatusHistory {
 export interface TripLocation {
   id: string | null
   bookingId: string | null
+  /** Which party produced this fix. Requester fixes are never used for crew ETA. */
+  subject: 'CREW' | 'REQUESTER'
   ambulanceId: string | null
   crewProfileId: string | null
   latitude: number | null
@@ -192,10 +194,18 @@ export interface TrackingView {
   bookingId: string | null
   status: BookingStatus
   isLive: boolean
+  /** Separate moving-pickup stream; visible only to the requester and assigned crew. */
+  isRequesterLocationLive: boolean
   staleAfterSeconds: number
   lastKnownSource: string | null
   location: TripLocation | null
-  nextWaypoint: { latitude: number; longitude: number } | null
+  requesterLocation: TripLocation | null
+  nextWaypoint: {
+    kind: 'PICKUP' | 'DESTINATION'
+    address: string | null
+    lat: number
+    lng: number
+  } | null
   distanceRemainingKm: number | null
   etaMinutes: number | null
   etaAt: string | null
@@ -387,6 +397,69 @@ export interface Hospital {
   landmark: string | null
   isActive: boolean
   acceptsEmergencies: boolean
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+// --- Crew -------------------------------------------------------------------
+// These mirror `toCrewProfile`, `toCrewDocument` and `toDispatchOffer` in the
+// backend serializers. Crew is a distinct role surface: an OFFER is not an
+// assigned trip, and neither is ever synthesized by the client.
+
+export type AvailabilityStatus = 'AVAILABLE' | 'ON_DUTY' | 'OFFLINE' | 'UNAVAILABLE'
+export type CrewStatus = 'INVITED' | 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED'
+export type CrewRole = 'DRIVER' | 'EMT' | 'PARAMEDIC' | 'NURSE' | 'DOCTOR' | 'ATTENDANT'
+export type CrewTripStatus = 'EN_ROUTE' | 'ARRIVED' | 'PATIENT_ON_BOARD' | 'AT_HOSPITAL' | 'COMPLETED'
+export type CrewDocumentStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+export interface CrewProfile {
+  id: string
+  userId: string
+  providerId: string
+  crewRole: CrewRole
+  status: CrewStatus
+  verificationStatus: 'PENDING' | 'VERIFIED' | 'REJECTED'
+  availability: AvailabilityStatus
+  licenseNumber: string | null
+  yearsExperience: number | null
+  assignedAmbulanceId: string | null
+  verifiedAt: string | null
+  deactivatedAt: string | null
+  deactivationReason: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface CrewDocument {
+  id: string
+  crewProfileId: string
+  type: string
+  fileUrl: string
+  status: CrewDocumentStatus
+  reviewedAt: string | null
+  rejectionReason: string | null
+  expiresAt: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+/** A dispatch offer for the signed-in crew member (historical offers included). */
+export interface DispatchOffer {
+  id: string
+  bookingId: string
+  providerId: string
+  ambulanceId: string
+  crewProfileId: string
+  round: number
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED'
+  /** Server-computed: PENDING and not expired. Never derive this locally. */
+  isLive: boolean
+  distanceKm: number | null
+  capabilityMatch: boolean
+  offeredAt: string | null
+  expiresAt: string | null
+  respondedAt: string | null
+  rejectionReason: string | null
   createdAt: string | null
   updatedAt: string | null
 }

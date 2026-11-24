@@ -5,14 +5,13 @@
  * spacing, radius and elevation are defined here only; screens must never
  * hard-code colour values.
  *
- * There are exactly two palettes — light and dark — built from the approved
- * Atlantic Teal system. Soft tints are alpha values of those same approved
- * colours, so no unapproved hex colours enter the product.
+ * The product is light mode only. Soft tints are alpha values of the approved
+ * palette colours, so no unapproved hex colours enter the product.
  */
 
 import { Platform, type TextStyle, type ViewStyle } from 'react-native'
 
-export type ColorSchemeName = 'light' | 'dark'
+export type ColorSchemeName = 'light'
 
 export interface ThemeColors {
   /** App canvas behind everything. */
@@ -83,10 +82,6 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-/* -------------------------------------------------------------------------- */
-/* Approved palettes                                                          */
-/* -------------------------------------------------------------------------- */
-
 const light = {
   primary: '#145B63',
   secondary: '#087F8C',
@@ -105,29 +100,6 @@ const light = {
   onSecondary: '#FFFFFF',
   onError: '#FFFFFF',
 } as const
-
-const dark = {
-  primary: '#1D7478',
-  secondary: '#123E43',
-  bg: '#101D22',
-  surface: '#192A30',
-  elevated: '#20343A',
-  highlight: '#20383D',
-  text: '#F1F5F5',
-  textSecondary: '#A8B8BC',
-  textMuted: '#71868C',
-  border: '#30454B',
-  success: '#45C28A',
-  warning: '#F2B45C',
-  error: '#FF7168',
-  onPrimary: '#F1F5F5',
-  onSecondary: '#F1F5F5',
-  onError: '#101D22',
-} as const
-
-/* -------------------------------------------------------------------------- */
-/* Resolved themes                                                            */
-/* -------------------------------------------------------------------------- */
 
 export const lightColors: ThemeColors = {
   bg: light.bg,
@@ -178,66 +150,12 @@ export const lightColors: ThemeColors = {
   onDisabled: light.textMuted,
 }
 
-export const darkColors: ThemeColors = {
-  bg: dark.bg,
-  bgElevated: dark.elevated,
-  surface: dark.surface,
-  surfaceAlt: dark.highlight,
-  subtle: dark.highlight,
-  border: dark.border,
-  borderStrong: dark.textMuted,
-  overlay: withAlpha(dark.bg, 0.72),
-  shadow: withAlpha(dark.bg, 0.60),
-
-  text: dark.text,
-  textMuted: dark.textSecondary,
-  textFaint: dark.textMuted,
-  textInverse: dark.bg,
-
-  primary: dark.primary,
-  primaryPressed: dark.primary,
-  primarySoft: dark.highlight,
-  onPrimary: dark.onPrimary,
-  // Light text on the dark highlight tint; primary teal would be too dim here.
-  onPrimarySoft: dark.text,
-  onPrimaryOverlay: withAlpha(dark.onPrimary, 0.18),
-
-  secondary: dark.secondary,
-  secondaryPressed: dark.secondary,
-  secondarySoft: dark.highlight,
-  onSecondary: dark.onSecondary,
-  onSecondarySoft: dark.text,
-
-  emergency: dark.error,
-  emergencyPressed: dark.error,
-  emergencySoft: withAlpha(dark.error, 0.14),
-  // Dark ink on the bright emergency red keeps alert actions readable.
-  onEmergency: dark.onError,
-  onEmergencySoft: dark.error,
-
-  success: dark.success,
-  successSoft: withAlpha(dark.success, 0.14),
-  onSuccessSoft: dark.success,
-  warning: dark.warning,
-  warningSoft: withAlpha(dark.warning, 0.14),
-  onWarningSoft: dark.warning,
-  info: dark.text,
-  infoSoft: dark.highlight,
-  onInfoSoft: dark.text,
-
-  disabled: dark.border,
-  onDisabled: dark.textMuted,
+/** Kept as a named export for non-hook consumers. The app is light mode only. */
+export function getColors(): ThemeColors {
+  return lightColors
 }
 
-/** Resolve a palette from a colour scheme. */
-export function getColors(scheme: ColorSchemeName): ThemeColors {
-  return scheme === 'dark' ? darkColors : lightColors
-}
-
-/**
- * Kept as a named export for any non-hook consumer.
- * @deprecated Prefer `useAppTheme().colors` so the active scheme is respected.
- */
+/** The app is light mode only; kept as a named export for compatibility. */
 export const colors: ThemeColors = lightColors
 
 /** 4pt spacing scale. */
@@ -313,16 +231,16 @@ export type Elevation = 'none' | 'sm' | 'md' | 'lg'
  * Depth is deliberately restrained: a hairline border does most of the work.
  * Only the `lg` preset adds a soft, on-palette shadow for sheets and overlays.
  */
-export function elevation(level: Elevation, scheme: ColorSchemeName = 'light'): ViewStyle {
+export function elevation(level: Elevation): ViewStyle {
   if (level === 'none' || level === 'sm' || level === 'md') return {}
   return Platform.select<ViewStyle>({
     ios: {
-      shadowColor: getColors(scheme).shadow,
-      shadowOpacity: scheme === 'dark' ? 0.55 : 0.16,
+      shadowColor: lightColors.shadow,
+      shadowOpacity: 0.16,
       shadowRadius: 22,
       shadowOffset: { width: 0, height: 10 },
     },
-    android: { elevation: scheme === 'dark' ? 4 : 8 },
+    android: { elevation: 8 },
     default: {},
   }) as ViewStyle
 }

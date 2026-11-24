@@ -1,7 +1,8 @@
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { FONT_FAMILY, FontProvider, ThemeProvider, useAppTheme } from '../theme'
+import { AppBootstrap } from '../components/AppBootstrap'
+import { FONT_FAMILY, ThemeProvider, useAppTheme } from '../theme'
 
 export default function RootLayout() {
   const t = useAppTheme()
@@ -14,10 +15,10 @@ export default function RootLayout() {
   }
 
   return (
-    <FontProvider>
+    <AppBootstrap>
       <ThemeProvider>
         <SafeAreaProvider>
-          <StatusBar style={t.scheme === 'dark' ? 'light' : 'dark'} />
+          <StatusBar style="dark" />
           <Stack
             screenOptions={{
               headerShown: false,
@@ -27,6 +28,11 @@ export default function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(crew)" />
+            <Stack.Screen
+              name="role-unavailable"
+              options={{ ...headerOptions, headerShown: true, title: 'Role not supported here' }}
+            />
             <Stack.Screen
               name="booking/[id]"
               options={{ ...headerOptions, headerShown: true, title: 'Live tracking', headerBackTitle: 'Back' }}
@@ -40,12 +46,24 @@ export default function RootLayout() {
               options={{ headerShown: false, presentation: 'modal' }}
             />
             <Stack.Screen
+              name="request/[mode]"
+              options={{ ...headerOptions, headerShown: true, title: 'Request transport', headerBackTitle: 'Back' }}
+            />
+            <Stack.Screen
+              name="journey/setup"
+              options={{ ...headerOptions, headerShown: true, title: 'Track My Journey', headerBackTitle: 'Back' }}
+            />
+            <Stack.Screen
+              name="journey/live"
+              options={{ ...headerOptions, headerShown: true, title: 'Journey tracking', headerBackTitle: 'Back' }}
+            />
+            <Stack.Screen
               name="test-api"
               options={{ ...headerOptions, headerShown: true, title: 'Diagnostics' }}
             />
           </Stack>
         </SafeAreaProvider>
       </ThemeProvider>
-    </FontProvider>
+    </AppBootstrap>
   )
 }

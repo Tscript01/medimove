@@ -1,5 +1,3 @@
-import { useColorScheme } from 'react-native'
-import { useThemeStore } from '../store/themeStore'
 import {
   componentSizes,
   elevation,
@@ -24,33 +22,21 @@ export interface AppTheme {
   text: (variant: TextVariant) => (typeof typography)[TextVariant]
 }
 
-/**
- * Resolve the active scheme from the saved preference and the device setting.
- * A preference of 'system' always defers to the OS; an explicit choice wins.
- */
+/** The app is light mode only, regardless of the device appearance setting. */
 export function useResolvedColorScheme(): ColorSchemeName {
-  const system = useColorScheme()
-  const preference = useThemeStore((state) => state.preference)
-
-  if (preference === 'system') {
-    return system === 'dark' ? 'dark' : 'light'
-  }
-  return preference
+  return 'light'
 }
 
 /** Theming hook consumed by every themed component in the app. */
 export function useAppTheme(): AppTheme {
-  const scheme = useResolvedColorScheme()
-  const colors = getColors(scheme)
-
   return {
-    scheme,
-    colors,
+    scheme: 'light',
+    colors: getColors(),
     spacing,
     radius,
     sizes: componentSizes,
     typography,
-    elevation: (level) => elevation(level, scheme),
+    elevation: (level) => elevation(level),
     text: (variant) => typography[variant],
   }
 }

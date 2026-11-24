@@ -1,20 +1,22 @@
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams } from 'expo-router'
 import { useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { InterswitchGateway } from '@/components/InterswitchGateway'
+import { RoleGate } from '@/components/RoleGate'
 import { AppText, Badge, Button, Card, EmptyState, Screen, SkeletonCard } from '@/components/ui'
 import { useAsync } from '@/hooks/useAsync'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { bookingService } from '@/services/booking.service'
 import { paymentService } from '@/services/payment.service'
 import { useAppTheme } from '@/theme'
 import type { InterswitchPayload } from '@/types'
 import { formatNaira, titleCase } from '@/utils/format'
 
-export default function CheckoutScreen() {
+function CheckoutContent() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>()
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
 
   const state = useAsync(() => bookingService.get(bookingId), [bookingId])
@@ -26,8 +28,8 @@ export default function CheckoutScreen() {
   const [error, setError] = useState<string | null>(null)
 
   const goToTracking = () => {
-    if (bookingId) router.replace({ pathname: '/booking/[id]', params: { id: bookingId } })
-    else router.back()
+    if (bookingId) navigation.replace({ pathname: '/booking/[id]', params: { id: bookingId } })
+    else navigation.back()
   }
 
   const payWithWallet = async () => {
@@ -112,7 +114,7 @@ export default function CheckoutScreen() {
           title="Checkout unavailable"
           message={state.error ?? 'This booking could not be found.'}
           actionLabel="Go back"
-          onAction={() => router.back()}
+          onAction={() => navigation.back()}
         />
       </Screen>
     )
@@ -223,3 +225,11 @@ const styles = StyleSheet.create({
   methodText: { flex: 1, gap: 2 },
   cashNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 12, marginTop: 16, borderWidth: StyleSheet.hairlineWidth },
 })
+
+export default function CheckoutScreen() {
+  return (
+    <RoleGate allow={['PATIENT']}>
+      <CheckoutContent />
+    </RoleGate>
+  )
+}

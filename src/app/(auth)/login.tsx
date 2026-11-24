@@ -1,16 +1,17 @@
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
-import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StyleSheet, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppInput, AppText, Button, Notice, Screen } from '@/components/ui'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { authService } from '@/services/auth.service'
 import { useAuthStore } from '@/store/authStore'
 import { useAppTheme } from '@/theme'
+import { homeForRole } from '@/utils/roleRouting'
 
 export default function LoginScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
   const insets = useSafeAreaInsets()
   const setAuth = useAuthStore((s) => s.setAuth)
@@ -35,7 +36,7 @@ export default function LoginScreen() {
       const res = await authService.login(email.trim(), password)
       await setAuth(res.user, { accessToken: res.accessToken, refreshToken: res.refreshToken })
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      router.replace('/(tabs)')
+      navigation.replace(homeForRole(res.user.role))
     } catch (err) {
       setFormError((err as Error).message || 'Unable to sign in. Check your details and try again.')
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -136,7 +137,7 @@ export default function LoginScreen() {
             New to MediMove?
           </AppText>
           <Pressable
-            onPress={() => router.push('/(auth)/register')}
+            onPress={() => navigation.navigate('/(auth)/register')}
             accessibilityRole="link"
             accessibilityLabel="Create an account"
             hitSlop={8}

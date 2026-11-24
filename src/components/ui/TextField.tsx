@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons'
-import { useState, type ComponentRef, type Ref } from 'react'
+import { useState, type ComponentRef, type ReactNode, type Ref } from 'react'
 import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native'
 import { useAppTheme, type ThemeColors } from '../../theme'
 import { AppText } from './AppText'
@@ -10,6 +10,8 @@ export interface TextFieldProps extends Omit<TextInputProps, 'accessibilityLabel
   error?: string
   icon?: React.ComponentProps<typeof Ionicons>['name']
   secure?: boolean
+  /** Trailing controls such as a clear button or search spinner. */
+  right?: ReactNode
   containerStyle?: import('react-native').StyleProp<import('react-native').ViewStyle>
   accessibilityLabel?: string
   /** Optional ref for keyboard focus chaining between fields. */
@@ -22,6 +24,7 @@ export function TextField({
   error,
   icon,
   secure = false,
+  right,
   containerStyle,
   accessibilityLabel,
   inputRef,
@@ -82,6 +85,7 @@ export function TextField({
             />
           </Pressable>
         ) : null}
+        {right}
       </View>
       {error || helper ? (
         <AppText variant="caption" color={error ? 'emergency' : 'textFaint'} style={styles.helper}>

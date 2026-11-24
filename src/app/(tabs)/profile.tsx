@@ -1,9 +1,7 @@
-import { Ionicons } from '@expo/vector-icons'
 import Constants from 'expo-constants'
 import * as Haptics from 'expo-haptics'
-import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Alert, StyleSheet, Switch, View } from 'react-native'
+import { Alert, RefreshControl, StyleSheet, Switch, View } from 'react-native'
 import {
   AppText,
   Avatar,
@@ -14,28 +12,22 @@ import {
   Screen,
   SecondaryButton,
   SectionHeader,
-  SegmentedControl,
-  type SegmentedOption,
 } from '@/components/ui'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
+import { authService } from '@/services/auth.service'
 import { useAuthStore } from '@/store/authStore'
-import { useThemeStore, type ThemePreference } from '@/store/themeStore'
 import { useAppTheme } from '@/theme'
 import { titleCase } from '@/utils/format'
 
-const THEME_OPTIONS: readonly SegmentedOption<ThemePreference>[] = [
-  { value: 'light', label: 'Light', icon: 'sunny-outline' },
-  { value: 'dark', label: 'Dark', icon: 'moon-outline' },
-  { value: 'system', label: 'System', icon: 'phone-portrait-outline' },
-]
-
 export default function ProfileScreen() {
   const t = useAppTheme()
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const user = useAuthStore((state) => state.user)
+  const updateUser = useAuthStore((state) => state.updateUser)
   const logout = useAuthStore((state) => state.logout)
-  const themePreference = useThemeStore((state) => state.preference)
-  const setThemePreference = useThemeStore((state) => state.setPreference)
 
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const [notifications, setNotifications] = useState(true)
   const [shareLocation, setShareLocation] = useState(true)
 
@@ -44,13 +36,21 @@ export default function ProfileScreen() {
     set(value)
   }
 
-  const comingSoon = (what: string) => () => Alert.alert(what, 'This screen is not built yet.')
-
-  const selectTheme = (preference: ThemePreference) => {
-    if (preference === themePreference) return
-    Haptics.selectionAsync().catch(() => {})
-    void setThemePreference(preference)
+  const refreshProfile = async () => {
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      const { user: fresh } = await authService.me()
+      updateUser(fresh)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (err) {
+      setRefreshError((err as Error).message || 'Could not refresh your profile.')
+    } finally {
+      setRefreshing(false)
+    }
   }
+
+  const comingSoon = (what: string) => () => Alert.alert(what, 'This screen is not built yet.')
 
   const signOut = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {})
@@ -61,7 +61,7 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: async () => {
           await logout()
-          router.replace('/(auth)/login')
+          navigation.replace('/(auth)/login')
         },
       },
     ])
@@ -73,11 +73,28 @@ export default function ProfileScreen() {
   }
 
   return (
-    <Screen>
-      <AppText variant="display">Profile</AppText>
+    <Screen
+      scroll
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={refreshProfile} tintColor={t.colors.primary} />
+      }
+    >
+      <View style={styles.headerRow}>
+        <AppText variant="display">Profile</AppText>
+        <SecondaryButton
+          label="Refresh"
+          icon="refresh-outline"
+          size="sm"
+          fullWidth={false}
+          loading={refreshing}
+          onPress={() => void refreshProfile()}
+        />
+      </View>
       <AppText variant="body" color="textMuted" style={styles.subtitle}>
         Your account and emergency details.
       </AppText>
+
+      {refreshError ? <Notice text={refreshError} tone="danger" /> : null}
 
       <Card style={styles.identity}>
         <Avatar name={user?.fullName ?? 'Guest'} size={62} />
@@ -134,40 +151,13 @@ export default function ProfileScreen() {
             />
           }
         />
-        <View
-          style={[
-            styles.appearance,
-            {
-              borderBottomColor: t.colors.border,
-              paddingHorizontal: t.spacing.lg,
-            },
-          ]}
-        >
-          <View style={styles.appearanceHeader}>
-            <View style={[styles.appearanceIcon, { backgroundColor: t.colors.primarySoft }]}>
-              <Ionicons name="color-palette-outline" size={18} color={t.colors.primary} />
-            </View>
-            <View style={styles.appearanceCopy}>
-              <AppText variant="bodyStrong">Appearance</AppText>
-              <AppText variant="caption" color="textMuted">
-                System follows your device setting.
-              </AppText>
-            </View>
-          </View>
-          <SegmentedControl
-            options={THEME_OPTIONS}
-            value={themePreference}
-            onChange={selectTheme}
-            accessibilityLabel="Appearance"
-          />
-        </View>
         <ListRow icon="language-outline" title="Language" value="English" onPress={comingSoon('Language')} last />
       </Card>
 
       <SectionHeader title="Support" />
       <Card padded={false}>
         <ListRow icon="help-circle-outline" title="Help & support" onPress={comingSoon('Help & support')} />
-        <ListRow icon="flash-outline" title="API diagnostics" onPress={() => router.push('/test-api')} />
+        <ListRow icon="flash-outline" title="API diagnostics" onPress={() => navigation.navigate('/test-api')} />
         <ListRow icon="lock-closed-outline" title="Privacy & terms" onPress={comingSoon('Privacy & terms')} last />
       </Card>
 
@@ -182,25 +172,12 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   subtitle: { marginTop: 4, marginBottom: 20 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   identityText: { flex: 1, gap: 2 },
   verifyNote: { marginTop: 12 },
   cardGap: { gap: 12 },
   noticePad: { padding: 16 },
-  appearance: {
-    gap: 12,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  appearanceHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  appearanceIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  appearanceCopy: { flex: 1, gap: 1 },
   signOut: { gap: 10, marginTop: 32, marginBottom: 8 },
 })

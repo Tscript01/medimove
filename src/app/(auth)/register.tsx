@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
-import { useRouter } from 'expo-router'
 import { useRef, useState, type ComponentRef } from 'react'
 import { Pressable, StyleSheet, TextInput, View } from 'react-native'
 import { AppInput, AppText, Button, Notice, Screen } from '@/components/ui'
 import { useKeyboardAwareScroll } from '@/hooks/useKeyboardAwareScroll'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { authService } from '@/services/auth.service'
 import { useAppTheme } from '@/theme'
 
@@ -17,7 +17,7 @@ function validatePassword(pw: string): string | null {
 }
 
 export default function RegisterScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
   const { scrollRef, onScroll, revealInput } = useKeyboardAwareScroll()
 
@@ -76,7 +76,7 @@ export default function RegisterScreen() {
         password,
       })
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      router.replace({ pathname: '/(auth)/verify', params: { email: email.trim() } })
+      navigation.replace({ pathname: '/(auth)/verify', params: { email: email.trim() } })
     } catch (err) {
       setFormError((err as Error).message || 'Unable to create your account.')
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -97,7 +97,7 @@ export default function RegisterScreen() {
       <View style={styles.hero}>
         <View style={styles.topRow}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => navigation.back()}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Go back"
@@ -259,7 +259,7 @@ export default function RegisterScreen() {
             Already have an account?
           </AppText>
           <Pressable
-            onPress={() => router.push('/(auth)/login')}
+            onPress={() => navigation.navigate('/(auth)/login')}
             accessibilityRole="link"
             accessibilityLabel="Sign in"
             hitSlop={8}

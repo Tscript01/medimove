@@ -29,12 +29,8 @@ export { Notice, type NoticeProps, type NoticeTone } from './Notice'
 export { PrimaryButton, SecondaryButton, EmergencyButton } from './SemanticButtons'
 export { ProgressBar, type ProgressBarProps } from './ProgressBar'
 export { Screen, type ScreenProps } from './Screen'
-export {
-  SegmentedControl,
-  type SegmentedControlProps,
-  type SegmentedOption,
-} from './SegmentedControl'
 export { SectionHeader, type SectionHeaderProps } from './SectionHeader'
 export { Skeleton, SkeletonCard, type SkeletonProps } from './Skeleton'
+export { Spinner, type SpinnerProps } from './Spinner'
 export { StatusBadge, type StatusBadgeProps } from './StatusBadge'
 export { TextField, type TextFieldProps } from './TextField'

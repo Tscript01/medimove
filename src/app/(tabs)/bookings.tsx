@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons'
-import { useRouter } from 'expo-router'
 import { useMemo } from 'react'
 import { Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native'
 import { AppText, Badge, EmptyState, Screen, SectionHeader, SkeletonCard } from '@/components/ui'
 import { useAsync } from '@/hooks/useAsync'
+import { useSafeNavigation } from '@/hooks/useSafeNavigation'
 import { bookingService } from '@/services/booking.service'
 import { useAppTheme } from '@/theme'
 import type { Booking, BookingStatus } from '@/types'
@@ -12,7 +12,7 @@ import { bookingStatusMeta, emergencyCategoryLabel, formatDate, formatNaira, tit
 const TERMINAL: BookingStatus[] = ['COMPLETED', 'CANCELLED', 'FAILED']
 
 export default function BookingsScreen() {
-  const router = useRouter()
+  const navigation = useSafeNavigation()
   const t = useAppTheme()
 
   const state = useAsync(() => bookingService.list({ limit: 30 }), [])
@@ -25,7 +25,7 @@ export default function BookingsScreen() {
     }
   }, [state.data])
 
-  const open = (id: string) => router.push({ pathname: '/booking/[id]', params: { id } })
+  const open = (id: string) => navigation.navigate({ pathname: '/booking/[id]', params: { id } })
 
   const renderBooking = (booking: Booking) => {
     const meta = bookingStatusMeta(booking.status)

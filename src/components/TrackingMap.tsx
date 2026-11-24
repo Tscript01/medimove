@@ -1,31 +1,19 @@
 import { Ionicons } from '@expo/vector-icons'
 import { useMemo, useState } from 'react'
-import { StyleSheet, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
 import { useAppTheme } from '../theme'
 import { AppText } from './ui'
+import type { MapCanvasProps, MapCoordinate } from './MapCanvas.types'
+
+export type { MapCoordinate, MapMarker } from './MapCanvas.types'
+
+export type TrackingMapProps = MapCanvasProps
 
 /**
- * A lightweight, dependency-free map used until a Mapbox token / development
- * build is configured. It projects real lat/lng values onto a schematic canvas,
- * so the route, ambulance and destination stay in the correct relative
- * positions. Renders identically in Expo Go, on device and on web.
+ * Schematic projection used on web and whenever a real map tile provider is
+ * unavailable. It preserves real relative positions and supports pin drops,
+ * but it is explicitly a preview — never a substitute for a confirmed address.
  */
-export interface MapMarker {
-  id: string
-  latitude: number
-  longitude: number
-  kind: 'user' | 'ambulance' | 'hospital'
-  label?: string
-}
-
-export interface TrackingMapProps {
-  markers: MapMarker[]
-  /** Ordered GPS trail; drawn as a polyline. */
-  route?: { latitude: number; longitude: number }[]
-  height?: number
-  /** Small overlay caption, e.g. "Live · updated 12s ago". */
-  caption?: string
-}
 
 const PAD = 34
 const MIN_SPAN = 0.01 // degrees — prevents divide-by-zero for a single point
@@ -35,7 +23,7 @@ interface Point {
   y: number
 }
 
-export function TrackingMap({ markers, route = [], height = 200, caption }: TrackingMapProps) {
+export function TrackingMap({ markers, route = [], height = 200, caption, onPick, accessibilityLabel }: TrackingMapProps) {
   const t = useAppTheme()
   const [size, setSize] = useState({ width: 0, height: 0 })
 
@@ -66,6 +54,19 @@ export function TrackingMap({ markers, route = [], height = 200, caption }: Trac
     return {
       x: PAD + ((longitude - bounds.minLng) / spanLng) * (size.width - PAD * 2),
       y: PAD + ((bounds.maxLat - latitude) / spanLat) * (size.height - PAD * 2),
+    }
+  }
+
+  const unproject = (x: number, y: number): MapCoordinate | null => {
+    if (!bounds || size.width <= PAD * 2 || size.height <= PAD * 2) return null
+    const lngRatio = (x - PAD) / (size.width - PAD * 2)
+    const latRatio = (y - PAD) / (size.height - PAD * 2)
+    const longitude = bounds.minLng + lngRatio * (bounds.maxLng - bounds.minLng)
+    const latitude = bounds.maxLat - latRatio * (bounds.maxLat - bounds.minLat)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+    return {
+      latitude: Math.min(90, Math.max(-90, latitude)),
+      longitude: Math.min(180, Math.max(-180, longitude)),
     }
   }
 
@@ -134,10 +135,22 @@ export function TrackingMap({ markers, route = [], height = 200, caption }: Trac
         const point = project(marker.latitude, marker.longitude)
         if (!point) return null
         const isUser = marker.kind === 'user'
+        const isRequester = marker.kind === 'requester'
         const isHospital = marker.kind === 'hospital'
-        const color = isUser ? t.colors.text : isHospital ? t.colors.info : t.colors.emergency
+        const color = isUser
+          ? t.colors.text
+          : isRequester
+            ? t.colors.secondary
+            : isHospital
+              ? t.colors.info
+              : t.colors.emergency
+        const filled = isUser || isRequester
         const size = isUser ? 14 : 30
-        const icon: 'locate' | 'business' | 'medical' = isUser ? 'locate' : isHospital ? 'business' : 'medical'
+        const icon: 'locate' | 'car-sport' | 'business' | 'medical' = isRequester
+          ? 'car-sport'
+          : isHospital
+            ? 'business'
+            : 'medical'
         return (
           <View key={marker.id} style={[styles.markerWrap, { left: point.x, top: point.y }]}>
             <View
@@ -147,13 +160,13 @@ export function TrackingMap({ markers, route = [], height = 200, caption }: Trac
                   width: size,
                   height: size,
                   borderRadius: size / 2,
-                  backgroundColor: isUser ? color : t.colors.surface,
+                  backgroundColor: filled ? color : t.colors.surface,
                   borderColor: color,
-                  borderWidth: isUser ? 0 : 2,
+                  borderWidth: filled ? 0 : 2,
                 },
               ]}
             >
-              {isUser ? null : <Ionicons name={icon} size={size * 0.5} color={color} />}
+              {isUser ? null : <Ionicons name={icon} size={size * 0.5} color={filled ? t.colors.surface : color} />}
             </View>
             {marker.label ? (
               <View style={[styles.label, { backgroundColor: t.colors.bgElevated, borderRadius: t.radius.sm }]}>
@@ -173,6 +186,18 @@ export function TrackingMap({ markers, route = [], height = 200, caption }: Trac
             {caption}
           </AppText>
         </View>
+      ) : null}
+
+      {onPick ? (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel ?? 'Move pickup pin on map'}
+          onPress={(event) => {
+            const coordinate = unproject(event.nativeEvent.locationX, event.nativeEvent.locationY)
+            if (coordinate) onPick(coordinate)
+          }}
+        />
       ) : null}
     </View>
   )

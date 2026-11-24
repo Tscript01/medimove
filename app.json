@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "medimove",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -26,6 +26,18 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsVersion": "11.33.0"
+        }
+      ],
+      [
+        "@rnmapbox/navigation",
+        {
+          "RNMapboxNavigationVersion": "3.33.0"
+        }
+      ],
       [
         "expo-splash-screen",
         {

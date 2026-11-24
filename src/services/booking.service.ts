@@ -7,6 +7,7 @@ import type {
   Gender,
   Pagination,
   TrackingView,
+  TripLocation,
 } from '../types'
 import { http } from './api'
 
@@ -47,6 +48,16 @@ export interface EstimateFareInput {
   destLng: number
 }
 
+/** One explicit moving-pickup fix from the requester's device. */
+export interface ShareRequesterLocationInput {
+  latitude: number
+  longitude: number
+  accuracyMeters?: number
+  speedKph?: number
+  headingDeg?: number
+  source?: 'GPS' | 'MAP_PIN'
+}
+
 export const bookingService = {
   /** Server-computed fare estimate (optional, shown before dispatch). */
   estimateFare: (input: EstimateFareInput) =>
@@ -66,6 +77,13 @@ export const bookingService = {
 
   /** Last-known position + ETA. Poll this while a trip is active. */
   tracking: (id: string) => http.get<{ success: boolean; tracking: TrackingView }>(`/bookings/${id}/tracking`),
+
+  /**
+   * Explicit moving-pickup fix. The server stamps the time and only the booking
+   * requester may call this while their crew is on the way.
+   */
+  shareRequesterLocation: (id: string, input: ShareRequesterLocationInput) =>
+    http.post<{ success: boolean; location: TripLocation }>(`/bookings/${id}/tracking/requester-location`, input),
 
   cancel: (id: string, reason?: string) =>
     http.post<{ success: boolean; booking: Booking }>(`/bookings/${id}/cancel`, { reason }),

@@ -49,7 +49,7 @@ export function Button({
 }: ButtonProps) {
   const t = useAppTheme()
   const config = VARIANTS[variant]
-  const height = size === 'sm' ? 40 : size === 'lg' ? 58 : 56
+  const height = size === 'sm' ? 44 : size === 'lg' ? 58 : 56
   const fg = t.colors[config.fg]
   const isDisabled = disabled || loading
 

@@ -87,20 +87,33 @@ export interface StatusMeta {
 }
 
 const BOOKING_STATUS: Record<BookingStatus, StatusMeta> = {
-  REQUESTED: { label: 'Searching', tone: 'info', icon: 'search-outline' },
-  OFFERED: { label: 'Offering', tone: 'info', icon: 'megaphone-outline' },
-  ACCEPTED: { label: 'Assigned', tone: 'primary', icon: 'checkmark-circle-outline' },
-  EN_ROUTE: { label: 'On the way', tone: 'primary', icon: 'navigate-outline' },
-  ARRIVED: { label: 'Arrived', tone: 'warning', icon: 'location-outline' },
-  PATIENT_ON_BOARD: { label: 'On board', tone: 'primary', icon: 'person-add-outline' },
+  REQUESTED: { label: 'Request submitted', tone: 'info', icon: 'send-outline' },
+  OFFERED: { label: 'Finding an ambulance', tone: 'info', icon: 'search-outline' },
+  ACCEPTED: { label: 'Ambulance assigned', tone: 'primary', icon: 'checkmark-circle-outline' },
+  EN_ROUTE: { label: 'Heading to pickup', tone: 'primary', icon: 'navigate-outline' },
+  ARRIVED: { label: 'Ambulance arrived', tone: 'warning', icon: 'location-outline' },
+  PATIENT_ON_BOARD: { label: 'Patient picked up', tone: 'primary', icon: 'person-add-outline' },
   AT_HOSPITAL: { label: 'At hospital', tone: 'success', icon: 'business-outline' },
-  COMPLETED: { label: 'Completed', tone: 'success', icon: 'checkmark-done-outline' },
-  CANCELLED: { label: 'Cancelled', tone: 'neutral', icon: 'close-circle-outline' },
-  FAILED: { label: 'Failed', tone: 'danger', icon: 'alert-circle-outline' },
+  COMPLETED: { label: 'Journey completed', tone: 'success', icon: 'checkmark-done-outline' },
+  CANCELLED: { label: 'Request cancelled', tone: 'neutral', icon: 'close-circle-outline' },
+  FAILED: { label: 'Request failed', tone: 'danger', icon: 'alert-circle-outline' },
 }
 
 export function bookingStatusMeta(status: BookingStatus): StatusMeta {
   return BOOKING_STATUS[status] ?? { label: titleCase(status), tone: 'neutral', icon: 'ellipse-outline' }
+}
+
+export const TERMINAL_BOOKING_STATUSES: readonly BookingStatus[] = ['COMPLETED', 'CANCELLED', 'FAILED']
+
+/** Statuses where a requester in another vehicle can still meet the crew. */
+export const MOVING_PICKUP_STATUSES: readonly BookingStatus[] = ['ACCEPTED', 'EN_ROUTE', 'ARRIVED']
+
+export function isActiveBookingStatus(status: BookingStatus): boolean {
+  return !TERMINAL_BOOKING_STATUSES.includes(status)
+}
+
+export function canShareMovingPickup(status: BookingStatus): boolean {
+  return MOVING_PICKUP_STATUSES.includes(status)
 }
 
 export function paymentStatusTone(status: PaymentStatus): BadgeTone {

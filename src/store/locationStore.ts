@@ -7,6 +7,10 @@ export interface PickupLocation {
   lng: number
   address: string
   source: PickupSource
+  /** A local GPS fix must be reviewed before it can be used for a request. */
+  confirmed: boolean
+  /** Nearby building or landmark. Strongly recommended for manual pins. */
+  landmark?: string
 }
 
 interface LocationState {

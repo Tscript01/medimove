@@ -1,43 +1,17 @@
 import { Redirect } from 'expo-router'
-import { useEffect } from 'react'
-import { ActivityIndicator, StyleSheet, View } from 'react-native'
-import { BrandMark } from '../components/BrandMark'
-import { AppText, Screen } from '../components/ui'
 import { useAuthStore } from '../store/authStore'
-import { useAppTheme } from '../theme'
+import { homeForRole } from '../utils/roleRouting'
 
 /**
- * Entry gate. Restores the session from stored tokens (validating via
- * `/auth/me`) before deciding where to send the user.
+ * Entry gate. Session restoration now happens in `AppBootstrap` while the
+ * native splash is still visible, so this screen only needs to route by the
+ * role returned by `/auth/me`.
  */
 export default function RootIndex() {
   const status = useAuthStore((state) => state.status)
-  const bootstrap = useAuthStore((state) => state.bootstrap)
-  const t = useAppTheme()
+  const role = useAuthStore((state) => state.user?.role)
 
-  useEffect(() => {
-    bootstrap()
-  }, [bootstrap])
-
-  if (status === 'loading') {
-    return (
-      <Screen>
-        <View style={styles.center}>
-          <BrandMark compact />
-          <ActivityIndicator size="small" color={t.colors.secondary} />
-          <AppText variant="caption" color="textMuted">
-            Restoring your session…
-          </AppText>
-        </View>
-      </Screen>
-    )
-  }
-
-  if (status === 'authenticated') return <Redirect href="/(tabs)" />
+  if (status === 'authenticated') return <Redirect href={homeForRole(role)} />
 
   return <Redirect href="/(auth)/welcome" />
 }
-
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24 },
-})

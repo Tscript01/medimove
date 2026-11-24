@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons'
 import type { ComponentProps } from 'react'
-import { StyleSheet, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
 import { useAppTheme, type ThemeColors } from '../../theme'
 import { AppText } from './AppText'
 
@@ -18,10 +18,13 @@ const TONES: Record<NoticeTone, { icon: IconName; bg: keyof ThemeColors; fg: key
 export interface NoticeProps {
   text: string
   tone?: NoticeTone
+  /** Optional single recovery action, such as opening manual entry. */
+  actionLabel?: string
+  onAction?: () => void
 }
 
 /** Compact inline feedback that does not interrupt the current task. */
-export function Notice({ text, tone = 'info' }: NoticeProps) {
+export function Notice({ text, tone = 'info', actionLabel, onAction }: NoticeProps) {
   const t = useAppTheme()
   const config = TONES[tone]
 
@@ -35,11 +38,25 @@ export function Notice({ text, tone = 'info' }: NoticeProps) {
       <AppText variant="caption" color={config.fg} style={styles.text}>
         {text}
       </AppText>
+      {actionLabel && onAction ? (
+        <Pressable
+          onPress={onAction}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+          style={styles.action}
+        >
+          <AppText variant="label" color={config.fg}>
+            {actionLabel}
+          </AppText>
+        </Pressable>
+      ) : null}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 12 },
+  wrap: { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 12 },
   text: { flex: 1 },
+  action: { minHeight: 44, justifyContent: 'center' },
 })
